@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createApp } from "./app.js";
 import { pgStore } from "./pg-store.js";
 
-const url = process.env.DATABASE_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
+const url = process.env.DATABASE_URL ?? "postgresql://postgres:postgres@127.0.0.1:54422/postgres";
 const app = createApp({
   store: pgStore(url),
   // v0 local development only: trust an x-bix-person header. Replace with Supabase Auth before anything leaves this machine.

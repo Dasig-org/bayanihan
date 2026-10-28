@@ -14,7 +14,7 @@ The reference BIX server, like HAPI for FHIR. Stores BIX records in Postgres, an
 ## Run locally
 
 ```bash
-# 1. Start Docker Desktop, then the local Supabase stack (Postgres on 54322)
+# 1. Start Docker Desktop, then the local Supabase stack (Postgres on 54422, beside Dasig's stack on 54322)
 supabase start
 supabase db reset          # applies supabase/migrations
 # 2. Start the server
