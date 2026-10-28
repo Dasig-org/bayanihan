@@ -40,6 +40,24 @@ describe("Bayanihan Server API", () => {
     const { app } = setup();
     expect((await app.request(`/Task/${secret.id}`, { headers: { "x-bix-person": "Person/stranger" } })).status).toBe(404);
   });
+  it("refuses making yourself an officer of someone else's group", async () => {
+    const { post } = setup();
+    const role = { resourceType: "Role", id: "99999999-9999-4999-8999-999999999999", meta: { version: 1 }, person: R("Person/intruder"), organization: R("Organization/cebu-wp"), code: { system: "bayanihan:role", code: "officer" }, status: "active" };
+    const r = await post("Person/intruder", { type: "transaction", entry: [{ resource: role }] });
+    expect(r.status).toBe(409);
+  });
+  it("lets you ask to join a group", async () => {
+    const { post } = setup();
+    const role = { resourceType: "Role", id: "99999999-9999-4999-8999-999999999998", meta: { version: 1 }, person: R("Person/josh"), organization: R("Organization/cebu-wp"), code: { system: "bayanihan:role", code: "volunteer-episodic" }, status: "requested" };
+    expect((await post("Person/josh", { type: "transaction", entry: [{ resource: role }] })).status).toBe(200);
+  });
+  it("makes whoever starts a group its officer", async () => {
+    const { post, store } = setup();
+    const org = { resourceType: "Organization", id: "99999999-9999-4999-8999-999999999997", meta: { version: 1 }, name: "Kabataan Tutors", kind: "informal" };
+    expect((await post("Person/ana", { type: "transaction", entry: [{ resource: org }] })).status).toBe(200);
+    const roles = store.all().filter((x) => x.resourceType === "Role" && (x["person"] as { reference: string }).reference === "Person/ana");
+    expect((roles[0]!["code"] as { code: string }).code).toBe("officer");
+  });
   it("refuses writes from nobody", async () => {
     const { post } = setup();
     expect((await post(null, { type: "transaction", entry: [{ resource: claim("Person/liza") }] })).status).toBe(401);

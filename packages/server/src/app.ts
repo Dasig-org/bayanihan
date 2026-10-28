@@ -3,6 +3,7 @@ import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, s
 import { importPublicJwk, type KeyStore } from "./keys.js";
 import { prefixFor, withRef, REF_SYSTEM, type Sequences } from "./refs.js";
 import { loadDirectory, permissionsForRecord, type Caller } from "./auth.js";
+import { canCreate } from "./create.js";
 
 export type ServerOptions = {
   store: Store & {
@@ -36,6 +37,14 @@ export function createApp(o: ServerOptions) {
     if (!ini) return record;
     const p = prefixFor(ini);
     return withRef(record, `${p}-${await o.sequences.next(p)}`);
+  }
+
+  /** Whoever starts a group becomes its officer, recorded by rule. */
+  async function founderRole(me: string, org: BixResource) {
+    const role: BixResource = { resourceType: "Role", id: o.newId(), meta: { version: 1 }, person: { reference: me }, organization: { reference: `Organization/${org.id}` },
+      code: { system: "bayanihan:role", code: "officer" }, status: "active", period: { start: o.now() } };
+    const r = applyChange(null, role, { actor: { type: "rule", rule: "founder-is-officer" }, permissions: [], now: o.now(), newId: o.newId });
+    if (r.ok) await o.store.commit(r.record, r.provenance);
   }
 
   async function seal(prev: BixResource | null, record: BixResource, provenance: BixResource): Promise<BixResource> {
@@ -117,20 +126,34 @@ export function createApp(o: ServerOptions) {
       const results = [];
       for (const e of entries) {
         const prev = await o.store.get(e.resource.resourceType, e.resource.id);
+        if (!prev) {
+          const why = canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource));
+          if (why) { results.push({ ok: false, reasons: [why], current: null }); continue; }
+        }
         const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now() });
         let committed = r.ok ? await reference(prev, r.record) : null;
-        if (r.ok && committed) await o.store.commit(committed, await seal(prev, committed, r.provenance));
+        if (r.ok && committed) {
+          await o.store.commit(committed, await seal(prev, committed, r.provenance));
+          if (!prev && committed.resourceType === "Organization") await founderRole(me, committed);
+        }
         results.push(r.ok ? { ok: true, record: committed } : { ok: false, reasons: r.reasons, current: prev });
       }
       return c.json({ resourceType: "Bundle", type: "transaction-response", entry: results }, results.every((r) => r.ok) ? 200 : 409);
     }
     if (bundle.type === "sync") {
       const changes = [];
-      for (const e of entries) changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: await ctxFor(e.resource) });
+      const refusedNew = [];
+      for (const e of entries) {
+        if (!(await o.store.get(e.resource.resourceType, e.resource.id))) {
+          const why = canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource));
+          if (why) { refusedNew.push({ record: e.resource, reasons: [why], current: null }); continue; }
+        }
+        changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: await ctxFor(e.resource) });
+      }
       const sealing = { get: (t: string, i: string) => o.store.get(t, i),
         commit: async (rec: BixResource, prov: BixResource) => { const prev = await o.store.get(rec.resourceType, rec.id); const ref = await reference(prev, rec); await o.store.commit(ref, await seal(prev, ref, prov)); } };
       const out = await replay(sealing, changes, o.now());
-      return c.json({ resourceType: "Bundle", type: "sync-response", accepted: out.accepted.map((a) => a.record), refused: out.refused });
+      return c.json({ resourceType: "Bundle", type: "sync-response", accepted: out.accepted.map((a) => a.record), refused: [...refusedNew, ...out.refused] });
     }
     return c.json({ error: "Bundle.type must be transaction or sync" }, 400);
   });
