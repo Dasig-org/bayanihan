@@ -4,6 +4,7 @@ import { importPublicJwk, type KeyStore } from "./keys.js";
 import { prefixFor, withRef, REF_SYSTEM, type Sequences } from "./refs.js";
 import { loadDirectory, permissionsForRecord, type Caller } from "./auth.js";
 import { canCreate } from "./create.js";
+import { ALLOWED_TYPES, MAX_FILE_BYTES, type FileStore } from "./files.js";
 
 export type ServerOptions = {
   store: Store & {
@@ -13,6 +14,8 @@ export type ServerOptions = {
     version?(type: string, id: string, version: number): Promise<BixResource | null>;
     mentioning?(reference: string): Promise<BixResource[]>;
   };
+  /** Where files are kept. Without it, uploads are refused. */
+  files?: FileStore;
   /** Counters for short references (LU 2027-24). Without it, records get none. */
   sequences?: Sequences;
   /** Group signing keys. Without it, completed work is not signed. */
@@ -189,6 +192,34 @@ export function createApp(o: ServerOptions) {
       add(prov);
     }
     return c.json(toBundle([...seen.values()], "export", o.newId(), o.now()));
+  });
+
+  /**
+   * Upload a file (raw body). Returns a BIX Attachment to put on a record's attachment[] or output[].
+   * Kept by this server; nobody needs an outside cloud account.
+   */
+  app.post("/$files", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    if (!me) return c.json({ error: "sign in to add files" }, 401);
+    if (!o.files) return c.json({ error: "this server does not keep files" }, 501);
+    const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim();
+    if (!ALLOWED_TYPES.some((t) => t.test(type))) return c.json({ error: `files of type ${type || "unknown"} aren't accepted` }, 415);
+    const bytes = new Uint8Array(await c.req.arrayBuffer());
+    if (!bytes.byteLength) return c.json({ error: "empty file" }, 400);
+    if (bytes.byteLength > MAX_FILE_BYTES) return c.json({ error: "files up to 15 MB" }, 413);
+    const showsMinors = c.req.query("showsMinors") === "true";
+    const m = await o.files.put(bytes, { contentType: type, uploadedBy: me, showsMinors });
+    const title = c.req.query("title");
+    return c.json({ contentType: m.contentType, url: `/$files/${m.hash}`, hash: m.hash, size: m.size, ...(title ? { title } : {}), showsMinors: m.showsMinors, capturedAt: o.now() }, 201);
+  });
+
+  /** Download a file. v0: signed-in people only; access per record comes next. Photos showing children are never public. */
+  app.get("/$files/:hash", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    if (!me || !o.files) return c.json({ error: "not found" }, 404);
+    const f = await o.files.get(c.req.param("hash"));
+    if (!f) return c.json({ error: "not found" }, 404);
+    return new Response(f.bytes as Uint8Array<ArrayBuffer>, { headers: { "content-type": f.meta.contentType, "cache-control": "private, max-age=31536000, immutable", "x-content-type-options": "nosniff" } });
   });
 
   /** Look up a record by its short reference, e.g. /$ref/LU 2027-24. Same access rules as reading it. */

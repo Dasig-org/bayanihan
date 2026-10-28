@@ -61,6 +61,15 @@ export function pgStore(url: string) {
       const rows = await sql`select resource from bix_records where position(${'"' + reference} in resource::text) > 0`;
       return rows.map((r) => r.resource as BixResource);
     },
+    fileMeta: {
+      async save(m: { hash: string; contentType: string; size: number; uploadedBy: string; showsMinors: boolean }) {
+        await sql`insert into bix_files (hash, content_type, size, uploaded_by, shows_minors) values (${m.hash}, ${m.contentType}, ${m.size}, ${m.uploadedBy}, ${m.showsMinors}) on conflict (hash) do nothing`;
+      },
+      async load(hash: string) {
+        const r = (await sql`select * from bix_files where hash = ${hash}`)[0];
+        return r ? { hash: r.hash, contentType: r.content_type, size: Number(r.size), uploadedBy: r.uploaded_by, showsMinors: r.shows_minors } : null;
+      },
+    },
     sql,
     end: () => sql.end(),
   } satisfies Store & Record<string, unknown>;

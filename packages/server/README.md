@@ -15,6 +15,8 @@ The reference BIX server, like HAPI for FHIR. Stores BIX records in Postgres, an
 | `GET /$ref/{ref}` | Find a record by its short reference, e.g. `/$ref/LU 2027-24` |
 | `GET /Person/{id}/$export` | Everything that names you, as a BIX Bundle. Only you. |
 | `GET /Organization/{id}/$export` | Everything a group owns, as a BIX Bundle. Needs `org.manage`. |
+| `POST /$files` | Upload a file (raw body, its content type, `?title=` and `?showsMinors=`). Returns a BIX Attachment. Up to 15 MB; images, PDF, Office files, text. |
+| `GET /$files/{hash}` | Download a file. Signed-in people only in v0. |
 | `POST /$me` | First sign-in: creates the caller's Person (a nickname is enough) and links the account |
 
 ## Run locally
@@ -37,4 +39,6 @@ npm run dev -w @bayanihan/server   # http://localhost:8787
 
 **Creating records** is checked too: anyone may start a group (and becomes its officer by rule) or ask to join one; adding people needs `member.manage`; planning needs `initiative.plan`; team members may propose work as drafts; you can only vote, follow, consent or send as yourself.
 
-**Not yet:** files storage.
+**Files** are kept by this server, named by their SHA-256 (stored once, however often they're uploaded), on local disk at `BIX_FILES_DIR` (default `packages/server/.data/files`). An S3-compatible store (MinIO for self-hosting) uses the same interface next.
+
+**Not yet:** file access per record (v0: any signed-in person with the link), S3-compatible file store, goal progress, mentions, the hub.
