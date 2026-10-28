@@ -26,6 +26,7 @@ export async function loadDirectory(store: Searchable, person: string | null, re
   };
   if (record.resourceType === "Team") dir.teams.push(record);
   if (record.resourceType === "Initiative") dir.initiatives.push(record);
+  await add("Team", ref(record["team"]));
   await add("Team", ref(record["owner"]));
   for (const t of [...dir.teams]) await add("Initiative", ref(t["initiative"]));
   await add("Initiative", ref(record["initiative"]) ?? ref(record["partOf"]));

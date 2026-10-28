@@ -31,7 +31,8 @@ export function owningParty(record: BixResource, dir: Directory): { organization
     return { organization: ref(record["organization"]), initiative: ini ? refOf(ini) : undefined, team: refOf(record) };
   }
   const owner = ref(record["owner"]);
-  const team = owner?.startsWith("Team/") ? dir.teams.find((t) => refOf(t) === owner) : undefined;
+  const teamRef = ref(record["team"]) ?? (owner?.startsWith("Team/") ? owner : undefined);
+  const team = teamRef ? dir.teams.find((t) => refOf(t) === teamRef) : undefined;
   if (team) return { ...owningParty(team, dir), team: refOf(team) };
   const iniRef = ref(record["initiative"]) ?? ref(record["partOf"]);
   const ini = dir.initiatives.find((i) => refOf(i) === iniRef);

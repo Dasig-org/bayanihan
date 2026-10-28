@@ -58,6 +58,16 @@ export function createApp(o: ServerOptions) {
     if (r.ok) await o.store.commit(r.record, r.provenance);
   }
 
+  /** Changing an existing record: the people on it or its lead; or a claim, or answering an ask, which Core's rules check. */
+  async function canUpdate(me: string, prev: BixResource, next: BixResource): Promise<string | null> {
+    const dir = await loadDirectory(o.store, me, prev);
+    if (authorize(me, "edit", prev, dir).allowed) return null;
+    if (prev.resourceType === "Task" && prev["status"] === "ready" && next["status"] === "accepted" && authorize(me, "claim", prev, dir).allowed) return null;
+    if (prev.resourceType === "Task" && prev["status"] === "requested" && (prev["owner"] as { reference?: string } | undefined)?.reference === me) return null;
+    if (prev.resourceType === "Decision" || prev.resourceType === "Role") return permissionsForRecord(me, prev, dir).length ? null : "not yours to change";
+    return "only the people on it, or its lead, can change this";
+  }
+
   async function seal(prev: BixResource | null, record: BixResource, provenance: BixResource): Promise<BixResource> {
     const p = { ...provenance, target: [{ reference: `${record.resourceType}/${record.id}/_history/${record.meta.version}` }] };
     const justDone = record.resourceType === "Task" && record["status"] === "completed" && prev?.["status"] !== "completed";
@@ -137,10 +147,8 @@ export function createApp(o: ServerOptions) {
       const results = [];
       for (const e of entries) {
         const prev = await o.store.get(e.resource.resourceType, e.resource.id);
-        if (!prev) {
-          const why = canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource));
-          if (why) { results.push({ ok: false, reasons: [why], current: null }); continue; }
-        }
+        const why = prev ? await canUpdate(me, prev, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource));
+        if (why) { results.push({ ok: false, reasons: [why], current: prev }); continue; }
         const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now() });
         let committed = r.ok ? await reference(prev, r.record) : null;
         if (r.ok && committed) {
@@ -155,10 +163,9 @@ export function createApp(o: ServerOptions) {
       const changes = [];
       const refusedNew = [];
       for (const e of entries) {
-        if (!(await o.store.get(e.resource.resourceType, e.resource.id))) {
-          const why = canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource));
-          if (why) { refusedNew.push({ record: e.resource, reasons: [why], current: null }); continue; }
-        }
+        const prevRec = await o.store.get(e.resource.resourceType, e.resource.id);
+        const why = prevRec ? await canUpdate(me, prevRec, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource));
+        if (why) { refusedNew.push({ record: e.resource, reasons: [why], current: prevRec }); continue; }
         changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: await ctxFor(e.resource) });
       }
       const sealing = { get: (t: string, i: string) => o.store.get(t, i),

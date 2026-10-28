@@ -58,6 +58,11 @@ describe("Bayanihan Server API", () => {
     const roles = store.all().filter((x) => x.resourceType === "Role" && (x["person"] as { reference: string }).reference === "Person/ana");
     expect((roles[0]!["code"] as { code: string }).code).toBe("officer");
   });
+  it("refuses a stranger editing someone else's task", async () => {
+    const { post } = setup();
+    const r = await post("Person/liza", { type: "transaction", entry: [{ resource: { ...slot, title: "Something else", meta: { version: 2 } } }] });
+    expect(r.status).toBe(409);
+  });
   it("refuses writes from nobody", async () => {
     const { post } = setup();
     expect((await post(null, { type: "transaction", entry: [{ resource: claim("Person/liza") }] })).status).toBe(401);
