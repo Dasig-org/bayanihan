@@ -30,7 +30,8 @@ export function pgStore(url: string) {
     },
     /** v0 search: equality on top-level string fields, or on a reference's target. */
     async search(type: string, params: Record<string, string>) {
-      const conds = Object.entries(params).map(([k, v]) =>
+      const conds = Object.entries(params).map(([k, v]) => k === "bayanihan:ref"
+        ? sql`resource->'identifier' @> ${sql.json([{ system: k, value: v }] as never)}` :
         sql`(resource->>${k} = ${v} or resource->${k}->>'reference' = ${v})`);
       const where = conds.reduce((a, b) => sql`${a} and ${b}`, sql`type = ${type}`);
       const rows = await sql`select resource from bix_records where ${where} order by updated_at desc limit 200`;

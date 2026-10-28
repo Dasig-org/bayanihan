@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, type Store, type BixResource, type Signature } from "@bayanihan/core";
 import { importPublicJwk, type KeyStore } from "./keys.js";
+import { prefixFor, withRef, REF_SYSTEM, type Sequences } from "./refs.js";
 import { loadDirectory, permissionsForRecord, type Caller } from "./auth.js";
 
 export type ServerOptions = {
@@ -10,6 +11,8 @@ export type ServerOptions = {
     provenanceFor?(target: string): Promise<BixResource[]>;
     version?(type: string, id: string, version: number): Promise<BixResource | null>;
   };
+  /** Counters for short references (LU 2027-24). Without it, records get none. */
+  sequences?: Sequences;
   /** Group signing keys. Without it, completed work is not signed. */
   keys?: KeyStore;
   /** Who is calling: a BIX Person reference, or null for an anonymous visitor. */
@@ -25,6 +28,16 @@ export function createApp(o: ServerOptions) {
   const app = new Hono();
 
   /** Before committing: point Provenance at the exact version, and sign completed work with the owning group's key. */
+  /** New Tasks, Needs, Offers and Decisions in a project get a short reference from the server. */
+  async function reference(prev: BixResource | null, record: BixResource): Promise<BixResource> {
+    if (prev || !o.sequences || !["Task", "Need", "Offer", "Decision"].includes(record.resourceType)) return record;
+    const dir = await loadDirectory(o.store, null, record);
+    const ini = dir.initiatives[0];
+    if (!ini) return record;
+    const p = prefixFor(ini);
+    return withRef(record, `${p}-${await o.sequences.next(p)}`);
+  }
+
   async function seal(prev: BixResource | null, record: BixResource, provenance: BixResource): Promise<BixResource> {
     const p = { ...provenance, target: [{ reference: `${record.resourceType}/${record.id}/_history/${record.meta.version}` }] };
     const justDone = record.resourceType === "Task" && record["status"] === "completed" && prev?.["status"] !== "completed";
@@ -54,14 +67,16 @@ export function createApp(o: ServerOptions) {
   app.get("/metadata", (c) =>
     c.json({ resourceType: "CapabilityStatement", bix: "0.1", software: { name: "Bayanihan Server", version: "0.1.0" }, resourceTypes, interactions: ["read", "search", "history", "transaction", "export"] }));
 
-  app.get("/:type/:id/_history", async (c) => {
+  app.get("/:type/:id/_history", async (c, next) => {
     const { type, id } = c.req.param();
+    if (type.startsWith("$")) return next();
     if (!o.store.history) return c.json({ error: "history not supported by this store" }, 501);
     return c.json(toBundle(await o.store.history(type, id), "export", o.newId(), o.now()));
   });
 
-  app.get("/:type/:id", async (c) => {
+  app.get("/:type/:id", async (c, next) => {
     const { type, id } = c.req.param();
+    if (type.startsWith("$") || id.startsWith("$")) return next();
     if (!resourceTypes.includes(type)) return c.json({ error: `unknown type ${type}` }, 404);
     const r = await o.store.get(type, id);
     if (!r) return c.json({ error: "not found" }, 404);
@@ -72,8 +87,9 @@ export function createApp(o: ServerOptions) {
     return c.json({ error: "not found" }, 404); // never reveal that a private record exists
   });
 
-  app.get("/:type", async (c) => {
+  app.get("/:type", async (c, next) => {
     const type = c.req.param("type");
+    if (type.startsWith("$")) return next();
     if (!resourceTypes.includes(type)) return c.json({ error: `unknown type ${type}` }, 404);
     if (!o.store.search) return c.json({ error: "search not supported by this store" }, 501);
     const me = (await o.identify(c.req.raw)).person;
@@ -102,8 +118,9 @@ export function createApp(o: ServerOptions) {
       for (const e of entries) {
         const prev = await o.store.get(e.resource.resourceType, e.resource.id);
         const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now() });
-        if (r.ok) await o.store.commit(r.record, await seal(prev, r.record, r.provenance));
-        results.push(r.ok ? { ok: true, record: r.record } : { ok: false, reasons: r.reasons, current: prev });
+        let committed = r.ok ? await reference(prev, r.record) : null;
+        if (r.ok && committed) await o.store.commit(committed, await seal(prev, committed, r.provenance));
+        results.push(r.ok ? { ok: true, record: committed } : { ok: false, reasons: r.reasons, current: prev });
       }
       return c.json({ resourceType: "Bundle", type: "transaction-response", entry: results }, results.every((r) => r.ok) ? 200 : 409);
     }
@@ -111,11 +128,24 @@ export function createApp(o: ServerOptions) {
       const changes = [];
       for (const e of entries) changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: await ctxFor(e.resource) });
       const sealing = { get: (t: string, i: string) => o.store.get(t, i),
-        commit: async (rec: BixResource, prov: BixResource) => o.store.commit(rec, await seal(await o.store.get(rec.resourceType, rec.id), rec, prov)) };
+        commit: async (rec: BixResource, prov: BixResource) => { const prev = await o.store.get(rec.resourceType, rec.id); const ref = await reference(prev, rec); await o.store.commit(ref, await seal(prev, ref, prov)); } };
       const out = await replay(sealing, changes, o.now());
       return c.json({ resourceType: "Bundle", type: "sync-response", accepted: out.accepted.map((a) => a.record), refused: out.refused });
     }
     return c.json({ error: "Bundle.type must be transaction or sync" }, 400);
+  });
+
+  /** Look up a record by its short reference, e.g. /$ref/LU 2027-24. Same access rules as reading it. */
+  app.get("/$ref/:ref", async (c) => {
+    if (!o.store.search) return c.json({ error: "not found" }, 404);
+    const want = c.req.param("ref").toUpperCase();
+    const me = (await o.identify(c.req.raw)).person;
+    for (const type of ["Task", "Need", "Offer", "Decision"]) {
+      for (const r of await o.store.search(type, { [REF_SYSTEM]: want })) {
+        if (authorize(me, "view", r, await loadDirectory(o.store, me, r)).allowed) return c.json(r);
+      }
+    }
+    return c.json({ error: "not found" }, 404);
   });
 
   /** A group's (or person's) public key, so anyone can check its signatures. */
