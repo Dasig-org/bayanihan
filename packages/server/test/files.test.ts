@@ -18,6 +18,10 @@ describe("files", () => {
     const back = await app.request(a.url, { headers: { "x-bix-person": "Person/mia" } });
     expect(new Uint8Array(await back.arrayBuffer())).toEqual(png);
   });
+  it("doesn't let another signed-in person download a file that isn't on a record they can see", async () => {
+    const a = await (await up("Person/mia", "image/png", new Uint8Array([9, 9, 9]))).json();
+    expect((await app.request(a.url, { headers: { "x-bix-person": "Person/stranger" } })).status).toBe(404);
+  });
   it("refuses anonymous uploads, unknown types and anonymous downloads", async () => {
     expect((await up(null, "image/png", png)).status).toBe(401);
     expect((await up("Person/mia", "application/x-msdownload", png)).status).toBe(415);

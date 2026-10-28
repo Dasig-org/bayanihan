@@ -239,12 +239,22 @@ export function createApp(o: ServerOptions) {
     return c.json({ contentType: m.contentType, url: `/$files/${m.hash}`, hash: m.hash, size: m.size, ...(title ? { title } : {}), showsMinors: m.showsMinors, capturedAt: o.now() }, 201);
   });
 
-  /** Download a file. v0: signed-in people only; access per record comes next. Photos showing children are never public. */
+  /** Download a file: its uploader, or anyone who may view a record that holds it. Photos showing children never leave the group. */
   app.get("/$files/:hash", async (c) => {
     const me = (await o.identify(c.req.raw)).person;
     if (!me || !o.files) return c.json({ error: "not found" }, 404);
     const f = await o.files.get(c.req.param("hash"));
     if (!f) return c.json({ error: "not found" }, 404);
+    let allowed = f.meta.uploadedBy === me;
+    if (!allowed && o.store.mentioning) {
+      for (const r of await o.store.mentioning(f.meta.hash)) {
+        if (r.resourceType === "Provenance") continue;
+        const dir = await loadDirectory(o.store, me, r);
+        const member = permissionsForRecord(me, r, dir).some((p) => p === "member" || p === "team.member");
+        if (authorize(me, "view", r, dir).allowed && (!f.meta.showsMinors || member)) { allowed = true; break; }
+      }
+    }
+    if (!allowed) return c.json({ error: "not found" }, 404);
     return new Response(f.bytes as Uint8Array<ArrayBuffer>, { headers: { "content-type": f.meta.contentType, "cache-control": "private, max-age=31536000, immutable", "x-content-type-options": "nosniff" } });
   });
 

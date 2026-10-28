@@ -59,7 +59,7 @@ export function pgStore(url: string) {
     },
     /** Every current record that mentions a reference (v0: text search over the JSON). */
     async mentioning(reference: string) {
-      const rows = await sql`select resource from bix_records where position(${'"' + reference} in resource::text) > 0`;
+      const rows = await sql`select resource from bix_records where position(${reference.includes("/") ? '"' + reference : reference} in resource::text) > 0`;
       return rows.map((r) => r.resource as BixResource);
     },
     fileMeta: {
