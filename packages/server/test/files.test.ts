@@ -5,7 +5,7 @@ import { memoryFiles } from "../src/files.js";
 
 const app = createApp({ store: new MemoryStore(), files: memoryFiles(), async identify(req) { return { person: req.headers.get("x-bix-person") }; }, now: () => "2026-11-04T10:00:00+08:00", newId: () => crypto.randomUUID() });
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
-const up = (who: string | null, type: string, body: Uint8Array, q = "") =>
+const up = (who: string | null, type: string, body: Uint8Array<ArrayBuffer>, q = "") =>
   app.request(`/$files${q}`, { method: "POST", headers: { "content-type": type, ...(who ? { "x-bix-person": who } : {}) }, body });
 
 describe("files", () => {
