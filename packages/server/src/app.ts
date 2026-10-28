@@ -18,6 +18,10 @@ export type ServerOptions = {
   };
   /** Secret halves of ShareLinks. Without it, links can't be created. */
   linkTokens?: LinkTokens;
+  /** Phones paired with this hub. With it, POST /$pair is available. */
+  devices?: { save(tokenHash: string, person: string): Promise<void>; personFor(tokenHash: string): Promise<string | null> };
+  /** The pairing code shown on the hub as a QR. Changing it stops new pairings with the old code. */
+  pairingCode?: () => string | null;
   /** Origins allowed to call this server from a browser (the Dasig web app). Default: any. */
   corsOrigins?: string[];
   /** Where files are kept. Without it, uploads are refused. */
@@ -372,6 +376,28 @@ export function createApp(o: ServerOptions) {
       }
     }
     return c.json({ record: `${type}/${id}`, signatures: checks, allValid: checks.length > 0 && checks.every((x) => x.unchanged) });
+  });
+
+  /**
+   * Pair a phone with this hub (spec: hubs pair by QR). The QR carries the hub's address and a pairing code.
+   * The phone sends the code and a nickname; the hub creates (or reuses) its Person and returns a device token.
+   */
+  app.post("/$pair", async (c) => {
+    if (!o.devices || !o.pairingCode) return c.json({ error: "this server is not a hub" }, 501);
+    const body = (await c.req.json()) as { code?: string; nickname?: string; person?: BixResource };
+    const code = o.pairingCode();
+    if (!code || body.code !== code) return c.json({ error: "this pairing code isn't valid; scan the hub's QR again" }, 403);
+    let person = body.person && body.person.resourceType === "Person" ? await o.store.get("Person", body.person.id) : null;
+    if (!person) {
+      const p: BixResource = body.person?.resourceType === "Person" ? { ...body.person, meta: { version: 1 } } : { resourceType: "Person", id: o.newId(), meta: { version: 1 }, name: { text: body.nickname || "Friend", use: "nickname" }, credit: "nickname", sharing: "private" };
+      const r = applyChange(null, p, { actor: { type: "person", person: { reference: `Person/${p.id}` } }, permissions: [], now: o.now(), newId: o.newId });
+      if (!r.ok) return c.json({ error: r.reasons }, 400);
+      await o.store.commit(r.record, r.provenance);
+      person = r.record;
+    }
+    const token = newToken();
+    await o.devices.save(await hashToken(token), `Person/${person.id}`);
+    return c.json({ person, token }, 201);
   });
 
   /** First sign-in: create the caller's Person (nickname is enough) and link the account. */
