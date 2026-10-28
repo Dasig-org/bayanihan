@@ -10,6 +10,7 @@ The reference BIX server, like HAPI for FHIR. Stores BIX records in Postgres, an
 | `GET /{type}/{id}/_history` | Every version of a record |
 | `POST /` with a `transaction` Bundle | Apply changes now; `409` with the current state if refused |
 | `POST /` with a `sync` Bundle | Replay offline changes in the order they happened; refusals reported |
+| `POST /$me` | First sign-in: creates the caller's Person (a nickname is enough) and links the account |
 
 ## Run locally
 
@@ -21,6 +22,8 @@ supabase db reset          # applies supabase/migrations
 npm run dev -w @bayanihan/server   # http://localhost:8787
 ```
 
-**Local only:** `identify()` in `src/main.ts` trusts an `x-bix-person` header. Replace it with Supabase Auth, and resolve permissions with Core's `authorize()`, before anything leaves this machine.
+**Sign-in.** Send a Supabase Auth access token as `Authorization: Bearer …`. The server verifies it, finds the linked Person (`bix_accounts`), and decides every read and write with Core's `authorize()` and `applyChange()`, using the roles of the group that owns each record. Private records you can't see answer 404, as if they don't exist. Published projects and groups return their public summary to anyone.
 
-**Not yet:** authentication, reads filtered by `authorize()`, signing completed records with the group key, export endpoints (`/Person/{id}/$export`), short references (`LU-24`), files storage.
+**Local testing shortcut:** `BIX_DEV_HEADERS=1 npm run dev -w @bayanihan/server` also accepts an `x-bix-person` header. Off by default; never enable it on a shared server.
+
+**Not yet:** signing completed records with the group key, export endpoints (`/Person/{id}/$export`), short references (`LU-24`), files storage.

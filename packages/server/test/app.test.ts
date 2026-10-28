@@ -5,14 +5,15 @@ import { createApp } from "../src/app.js";
 let n = 0;
 const newId = () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
 const R = (r: string) => ({ reference: r });
-const slot: BixResource = { resourceType: "Task", id: "44444444-4444-4444-8444-444444444444", meta: { version: 1 }, intent: "plan", status: "ready", title: "Marshal, km 3", owner: R("Team/marshals"), audience: "open" };
+const slot: BixResource = { resourceType: "Task", id: "44444444-4444-4444-8444-444444444444", meta: { version: 1 }, intent: "plan", status: "ready", title: "Marshal, km 3", owner: R("Team/marshals"), audience: "open", sharing: "public" };
+const secret: BixResource = { resourceType: "Task", id: "66666666-6666-4666-8666-666666666666", meta: { version: 1 }, intent: "plan", status: "ready", title: "Budget", owner: R("Team/finance"), sharing: "private" };
 
 function setup() {
   const store = new MemoryStore();
-  store.put(slot);
+  store.put(slot); store.put(secret);
   const app = createApp({
     store,
-    async identify(req) { const p = req.headers.get("x-bix-person"); return p ? { actor: { type: "person", person: R(p) }, permissions: [], newId } : null; },
+    async identify(req) { return { person: req.headers.get("x-bix-person") }; },
     now: () => "2026-11-01T09:00:00+08:00",
     newId,
   });
@@ -34,6 +35,10 @@ describe("Bayanihan Server API", () => {
     const r = await app.request(`/Task/${slot.id}`);
     expect(r.status).toBe(200);
     expect((await r.json()).title).toBe("Marshal, km 3");
+  });
+  it("hides a private record from someone outside it, as if it doesn't exist", async () => {
+    const { app } = setup();
+    expect((await app.request(`/Task/${secret.id}`, { headers: { "x-bix-person": "Person/stranger" } })).status).toBe(404);
   });
   it("refuses writes from nobody", async () => {
     const { post } = setup();

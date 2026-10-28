@@ -36,6 +36,13 @@ export function pgStore(url: string) {
       const rows = await sql`select resource from bix_records where ${where} order by updated_at desc limit 200`;
       return rows.map((r) => r.resource as BixResource);
     },
+    async personForAccount(authUserId: string) {
+      const rows = await sql`select person_id from bix_accounts where auth_user_id = ${authUserId}`;
+      return (rows[0]?.person_id as string | undefined) ?? null;
+    },
+    async linkAccount(authUserId: string, person: BixResource) {
+      await sql`insert into bix_accounts (auth_user_id, person_id) values (${authUserId}, ${"Person/" + person.id})`;
+    },
     end: () => sql.end(),
   } satisfies Store & Record<string, unknown>;
 }
