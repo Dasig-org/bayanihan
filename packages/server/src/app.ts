@@ -11,6 +11,7 @@ export type ServerOptions = {
     history?(type: string, id: string): Promise<BixResource[]>;
     provenanceFor?(target: string): Promise<BixResource[]>;
     version?(type: string, id: string, version: number): Promise<BixResource | null>;
+    mentioning?(reference: string): Promise<BixResource[]>;
   };
   /** Counters for short references (LU 2027-24). Without it, records get none. */
   sequences?: Sequences;
@@ -156,6 +157,38 @@ export function createApp(o: ServerOptions) {
       return c.json({ resourceType: "Bundle", type: "sync-response", accepted: out.accepted.map((a) => a.record), refused: [...refusedNew, ...out.refused] });
     }
     return c.json({ error: "Bundle.type must be transaction or sync" }, 400);
+  });
+
+  /** Rule 18: a person exports every record that names them, any time, without asking anyone. */
+  app.get("/Person/:id/$export", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    const ref = `Person/${c.req.param("id")}`;
+    if (me !== ref) return c.json({ error: "only you can export your own records" }, 403);
+    if (!o.store.mentioning) return c.json({ error: "export not supported by this store" }, 501);
+    const own = await o.store.get("Person", c.req.param("id"));
+    const recs = [...(own ? [own] : []), ...(await o.store.mentioning(ref)).filter((r) => r.id !== own?.id)];
+    const visible = [];
+    for (const r of recs) if (r.resourceType === "Provenance" || authorize(me, "view", r, await loadDirectory(o.store, me, r)).allowed) visible.push(r);
+    return c.json(toBundle(visible, "export", o.newId(), o.now()));
+  });
+
+  /** Rule 18: a group exports everything it owns. Needs org.manage. */
+  app.get("/Organization/:id/$export", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    const org = await o.store.get("Organization", c.req.param("id"));
+    if (!org || !o.store.mentioning) return c.json({ error: "not found" }, 404);
+    const perms = permissionsForRecord(me, org, await loadDirectory(o.store, me, org));
+    if (!perms.includes("org.manage")) return c.json({ error: "exporting a group needs org.manage" }, 403);
+    const seen = new Map<string, BixResource>([[`Organization/${org.id}`, org]]);
+    const add = (rs: BixResource[]) => rs.forEach((r) => seen.set(`${r.resourceType}/${r.id}`, r));
+    add(await o.store.mentioning(`Organization/${org.id}`));
+    // One level further: everything in its projects and teams.
+    for (const r of [...seen.values()].filter((x) => x.resourceType === "Initiative" || x.resourceType === "Team")) add(await o.store.mentioning(`${r.resourceType}/${r.id}`));
+    for (const r of [...seen.values()].filter((x) => x.resourceType === "Task" || x.resourceType === "Need")) {
+      const prov = o.store.provenanceFor ? await o.store.provenanceFor(`${r.resourceType}/${r.id}`) : [];
+      add(prov);
+    }
+    return c.json(toBundle([...seen.values()], "export", o.newId(), o.now()));
   });
 
   /** Look up a record by its short reference, e.g. /$ref/LU 2027-24. Same access rules as reading it. */

@@ -24,6 +24,7 @@ const active = (r: BixResource) => r["status"] === "active";
 /** The Organization or Person that owns a record, following Task → Team / Initiative. */
 export function owningParty(record: BixResource, dir: Directory): { organization?: string; person?: string; initiative?: string; team?: string } {
   if (record.resourceType === "Organization") return { organization: refOf(record) };
+  if (record.resourceType === "Person") return { person: refOf(record), organization: ref(record["managedBy"])?.startsWith("Organization/") ? ref(record["managedBy"]) : undefined };
   if (record.resourceType === "Initiative") return { organization: ref(record["organization"]), person: ref(record["person"]), initiative: refOf(record) };
   if (record.resourceType === "Team") {
     const ini = dir.initiatives.find((i) => refOf(i) === ref(record["initiative"]));

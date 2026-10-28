@@ -56,6 +56,11 @@ export function pgStore(url: string) {
       const rows = await sql`select resource from bix_history where type = ${type} and id = ${id} and version = ${version}`;
       return (rows[0]?.resource as BixResource | undefined) ?? null;
     },
+    /** Every current record that mentions a reference (v0: text search over the JSON). */
+    async mentioning(reference: string) {
+      const rows = await sql`select resource from bix_records where position(${'"' + reference} in resource::text) > 0`;
+      return rows.map((r) => r.resource as BixResource);
+    },
     sql,
     end: () => sql.end(),
   } satisfies Store & Record<string, unknown>;

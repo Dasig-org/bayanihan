@@ -12,6 +12,9 @@ The reference BIX server, like HAPI for FHIR. Stores BIX records in Postgres, an
 | `POST /` with a `sync` Bundle | Replay offline changes in the order they happened; refusals reported |
 | `GET /{type}/{id}/$verify` | Check a record's signatures: who signed which version, and whether it's unchanged |
 | `GET /$keys/{type}/{id}` | A group's or person's public key, for checking signatures anywhere |
+| `GET /$ref/{ref}` | Find a record by its short reference, e.g. `/$ref/LU 2027-24` |
+| `GET /Person/{id}/$export` | Everything that names you, as a BIX Bundle. Only you. |
+| `GET /Organization/{id}/$export` | Everything a group owns, as a BIX Bundle. Needs `org.manage`. |
 | `POST /$me` | First sign-in: creates the caller's Person (a nickname is enough) and links the account |
 
 ## Run locally
@@ -30,4 +33,8 @@ npm run dev -w @bayanihan/server   # http://localhost:8787
 
 **Signing.** When work is completed (or confirmed), the server signs that exact version with the owning group's Ed25519 key (a person's, for personal work), over its RFC 8785 form, and stores the signature on its Provenance. Private keys stay in `bix_keys`.
 
-**Not yet:** export endpoints (`/Person/{id}/$export`), short references (`LU-24`), files storage.
+**Short references.** New Tasks, Needs, Offers and Decisions in a project get `{PREFIX}-{n}`. The prefix is the project's `bayanihan:ref-prefix` identifier (e.g. `LU 2027`), or its initials and year.
+
+**Creating records** is checked too: anyone may start a group (and becomes its officer by rule) or ask to join one; adding people needs `member.manage`; planning needs `initiative.plan`; team members may propose work as drafts; you can only vote, follow, consent or send as yourself.
+
+**Not yet:** files storage.

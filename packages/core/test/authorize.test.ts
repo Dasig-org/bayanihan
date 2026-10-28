@@ -57,6 +57,14 @@ describe("personal work", () => {
   });
 });
 
+describe("people", () => {
+  it("a person can always see their own record; others can't see a private one", () => {
+    const mia: BixResource = { resourceType: "Person", id: "mia", meta: m, name: { text: "Mia" }, sharing: "private" };
+    expect(authorize("Person/mia", "view", mia, dir).allowed).toBe(true);
+    expect(authorize("Person/don", "view", mia, dir).allowed).toBe(false);
+  });
+});
+
 describe("sharing and links", () => {
   it("strangers see a published project's summary but not its work", () => {
     expect(authorize(null, "view-summary", dir.initiatives[0]!, dir).allowed).toBe(true);
