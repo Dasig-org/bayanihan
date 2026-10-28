@@ -5,3 +5,4 @@ export * from "./sign.js";
 export * from "./figures.js";
 export * from "./vote.js";
 export * from "./authorize.js";
+export * from "./bundle.js";
