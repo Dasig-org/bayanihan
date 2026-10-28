@@ -16,6 +16,7 @@ const app = createApp({
   store,
   keys: pgKeys(store.sql),
   sequences: pgSequences(store.sql),
+  linkTokens: store.linkTokens,
   files: diskFiles(process.env.BIX_FILES_DIR ?? ".data/files", store.fileMeta),
   async identify(req) {
     if (devHeaders && req.headers.get("x-bix-person")) return { person: req.headers.get("x-bix-person") };

@@ -70,6 +70,10 @@ export function pgStore(url: string) {
         return r ? { hash: r.hash, contentType: r.content_type, size: Number(r.size), uploadedBy: r.uploaded_by, showsMinors: r.shows_minors } : null;
       },
     },
+    linkTokens: {
+      async save(tokenHash: string, linkId: string) { await sql`insert into bix_link_tokens (token_hash, link_id) values (${tokenHash}, ${linkId})`; },
+      async find(tokenHash: string) { const r = (await sql`select link_id from bix_link_tokens where token_hash = ${tokenHash}`)[0]; return (r?.link_id as string | undefined) ?? null; },
+    },
     sql,
     end: () => sql.end(),
   } satisfies Store & Record<string, unknown>;
