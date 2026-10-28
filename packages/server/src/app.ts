@@ -50,6 +50,17 @@ export function createApp(o: ServerOptions) {
     return withRef(record, `${p}-${await o.sequences.next(p)}`);
   }
 
+  /** People in the same group see each other's name and photo (never contact details). */
+  async function sharesGroup(a: string, b: string) {
+    const orgs = async (p: string) => new Set((await o.store.search!("Role", { person: p })).filter((r) => r["status"] === "active").map((r) => (r["organization"] as { reference: string }).reference));
+    const [x, y] = await Promise.all([orgs(a), orgs(b)]);
+    return [...x].some((g) => y.has(g));
+  }
+  const personCard = (p: BixResource): BixResource => {
+    const anon = p["credit"] === "anonymous";
+    return { resourceType: "Person", id: p.id, meta: p.meta, name: anon ? { text: "A volunteer", use: "nickname" } : p["name"], ...(p["photo"] && !anon ? { photo: p["photo"] } : {}) };
+  };
+
   /** Whoever starts a group becomes its officer, recorded by rule. */
   async function founderRole(me: string, org: BixResource) {
     const role: BixResource = { resourceType: "Role", id: o.newId(), meta: { version: 1 }, person: { reference: me }, organization: { reference: `Organization/${org.id}` },
@@ -114,6 +125,7 @@ export function createApp(o: ServerOptions) {
     const dir = await loadDirectory(o.store, me, r);
     if (authorize(me, "view", r, dir).allowed) return c.json(r);
     if (authorize(me, "view-summary", r, dir).allowed && (type === "Initiative" || type === "Organization")) return c.json(summary(r));
+    if (type === "Person" && me && o.store.search && (await sharesGroup(me, `Person/${id}`))) return c.json(personCard(r));
     return c.json({ error: "not found" }, 404); // never reveal that a private record exists
   });
 

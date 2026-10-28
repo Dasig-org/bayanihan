@@ -35,7 +35,7 @@ export function pgStore(url: string) {
         ? sql`resource->'participant' @> ${sql.json([{ person: { reference: v } }] as never)}` :
         sql`(resource->>${k} = ${v} or resource->${k}->>'reference' = ${v})`);
       const where = conds.reduce((a, b) => sql`${a} and ${b}`, sql`type = ${type}`);
-      const rows = await sql`select resource from bix_records where ${where} order by updated_at desc limit 200`;
+      const rows = await sql`select resource from bix_records where ${where} order by updated_at asc limit 200`;
       return rows.map((r) => r.resource as BixResource);
     },
     async personForAccount(authUserId: string) {
