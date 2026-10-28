@@ -9,10 +9,10 @@ const claim = (who: string): BixResource => ({ ...slot, status: "accepted", owne
 const ctx = (who: string) => ({ actor: { type: "person" as const, person: R(who) }, permissions: [], newId });
 
 describe("offline replay", () => {
-  it("first claim to have happened wins; the other is refused with the current state", () => {
+  it("first claim to have happened wins; the other is refused with the current state", async () => {
     const store = new MemoryStore();
     store.put(slot);
-    const r = replay(store, [
+    const r = await replay(store, [
       { record: claim("Person/liza"), occurredAt: "2026-11-01T06:12:00+08:00", context: ctx("Person/liza") },
       { record: claim("Person/rhea"), occurredAt: "2026-11-01T06:10:00+08:00", context: ctx("Person/rhea") },
     ], "2026-11-01T09:00:00+08:00");

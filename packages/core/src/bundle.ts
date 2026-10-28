@@ -3,13 +3,15 @@ import { applyChange, type Context } from "./rules.js";
 
 /** Where records live. The server backs this with Postgres; tests and the phone use memory or SQLite. */
 export interface Store {
-  get(type: string, id: string): BixResource | null;
-  put(record: BixResource): void;
+  get(type: string, id: string): Promise<BixResource | null>;
+  /** Write a record (a new version) and its provenance together, or neither. */
+  commit(record: BixResource, provenance: BixResource): Promise<void>;
 }
 
 export class MemoryStore implements Store {
   private m = new Map<string, BixResource>();
-  get(type: string, id: string) { return this.m.get(`${type}/${id}`) ?? null; }
+  async get(type: string, id: string) { return this.m.get(`${type}/${id}`) ?? null; }
+  async commit(r: BixResource, p: BixResource) { this.put(r); this.put(p); }
   put(r: BixResource) { this.m.set(`${r.resourceType}/${r.id}`, r); }
   all() { return [...this.m.values()]; }
 }
@@ -27,16 +29,15 @@ export type Replayed = {
  * so a claim made offline loses to one that reached the home server first. Refused changes are
  * reported, never merged.
  */
-export function replay(store: Store, changes: Change[], recordedAt: string): Replayed {
+export async function replay(store: Store, changes: Change[], recordedAt: string): Promise<Replayed> {
   const out: Replayed = { accepted: [], refused: [] };
   const ordered = [...changes].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   for (const c of ordered) {
-    const current = store.get(c.record.resourceType, c.record.id);
+    const current = await store.get(c.record.resourceType, c.record.id);
     const r = applyChange(current, c.record, { ...c.context, now: c.occurredAt, offline: true });
     if (r.ok) {
       const provenance = { ...r.provenance, recorded: recordedAt };
-      store.put(r.record);
-      store.put(provenance);
+      await store.commit(r.record, provenance);
       out.accepted.push({ record: r.record, provenance });
     } else {
       out.refused.push({ record: c.record, reasons: r.reasons, current });
