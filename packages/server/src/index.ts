@@ -6,3 +6,4 @@ export { memoryLinkTokens, type LinkTokens } from "./links.js";
 export type { Caller } from "./auth.js";
 export { sqliteStore, type Db } from "./sqlite-store.js";
 export { newToken, hashToken } from "./links.js";
+export { serveTcp, type CreateServer, type TcpSocket } from "./http-tcp.js";

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createApp, sqliteStore, hashToken, type BixResource } from "../src/index.js";
+import type { BixResource } from "@bayanihan/core";
+import { createApp, sqliteStore, hashToken } from "../src/index.js";
 import { nodeDb } from "./node-db.js";
 
 async function hub() {
