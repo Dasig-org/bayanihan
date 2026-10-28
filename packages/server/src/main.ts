@@ -2,10 +2,10 @@ import { serve } from "@hono/node-server";
 import { randomUUID } from "node:crypto";
 import { createApp } from "./app.js";
 import { pgStore } from "./pg-store.js";
-import { verifyToken } from "./auth.js";
+import { verifyToken } from "./auth-jwt.js";
 import { pgKeys } from "./keys.js";
 import { pgSequences } from "./refs.js";
-import { diskFiles } from "./files.js";
+import { diskFiles } from "./files-disk.js";
 
 const url = process.env.DATABASE_URL ?? "postgresql://postgres:postgres@127.0.0.1:54422/postgres";
 const secret = process.env.SUPABASE_JWT_SECRET ?? "super-secret-jwt-token-with-at-least-32-characters-long"; // local Supabase default

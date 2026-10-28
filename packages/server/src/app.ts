@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, type Store, type BixResource, type Signature } from "@bayanihan/core";
-import { importPublicJwk, type KeyStore } from "./keys.js";
+import type { KeyStore } from "./keys.js";
 import { prefixFor, withRef, REF_SYSTEM, type Sequences } from "./refs.js";
 import { loadDirectory, permissionsForRecord, type Caller } from "./auth.js";
 import { canCreate } from "./create.js";
@@ -351,7 +351,7 @@ export function createApp(o: ServerOptions) {
   /** A group's (or person's) public key, so anyone can check its signatures. */
   app.get("/$keys/:type/:id", async (c) => {
     const k = o.keys && (await o.keys.publicKeyFor(`${c.req.param("type")}/${c.req.param("id")}`));
-    return k ? c.json({ owner: `${c.req.param("type")}/${c.req.param("id")}`, keyId: k.keyId, alg: "Ed25519", publicJwk: k.publicJwk }) : c.json({ error: "no key" }, 404);
+    return k ? c.json({ owner: `${c.req.param("type")}/${c.req.param("id")}`, keyId: k.keyId, alg: "Ed25519", publicKey: k.publicKey }) : c.json({ error: "no key" }, 404);
   });
 
   /** Check a record's signatures: who signed which version, and whether it is unchanged. */
@@ -367,7 +367,7 @@ export function createApp(o: ServerOptions) {
         const v = Number(((p["target"] as { reference: string }[])[0]!.reference.split("/_history/")[1]));
         const signed = await o.store.version(type, id, v);
         const pub = await o.keys.publicKeyFor(sig.who.reference);
-        const ok = !!signed && !!pub && (await verifyRecord(signed, sig, await importPublicJwk(pub.publicJwk)));
+        const ok = !!signed && !!pub && (await verifyRecord(signed, sig, pub.publicKey));
         checks.push({ version: v, signedBy: sig.who.reference, when: sig.when, unchanged: ok });
       }
     }

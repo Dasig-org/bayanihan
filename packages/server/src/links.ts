@@ -1,3 +1,4 @@
+import { randomBytes } from "@noble/hashes/utils";
 import { sha256hex } from "./files.js";
 
 export interface LinkTokens { save(tokenHash: string, linkId: string): Promise<void>; find(tokenHash: string): Promise<string | null> }
@@ -7,7 +8,7 @@ export function memoryLinkTokens(): LinkTokens {
 }
 /** 128 bits, URL-safe. Unguessable; only its hash is stored. */
 export function newToken(): string {
-  const b = crypto.getRandomValues(new Uint8Array(16));
+  const b = randomBytes(16);
   return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 export const hashToken = (t: string) => sha256hex(new TextEncoder().encode(t) as Uint8Array<ArrayBuffer>);
