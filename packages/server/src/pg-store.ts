@@ -43,6 +43,19 @@ export function pgStore(url: string) {
     async linkAccount(authUserId: string, person: BixResource) {
       await sql`insert into bix_accounts (auth_user_id, person_id) values (${authUserId}, ${"Person/" + person.id})`;
     },
+    /** Provenance records about one record, newest last. */
+    async provenanceFor(target: string) {
+      const rows = await sql`select resource from bix_records where type = 'Provenance'
+        and (resource->'target' @> ${sql.json([{ reference: target }] as never)} or exists (
+          select 1 from jsonb_array_elements(resource->'target') t where t->>'reference' like ${target + "/_history/%"}))
+        order by resource->>'occurredAt'`;
+      return rows.map((r) => r.resource as BixResource);
+    },
+    async version(type: string, id: string, version: number) {
+      const rows = await sql`select resource from bix_history where type = ${type} and id = ${id} and version = ${version}`;
+      return (rows[0]?.resource as BixResource | undefined) ?? null;
+    },
+    sql,
     end: () => sql.end(),
   } satisfies Store & Record<string, unknown>;
 }

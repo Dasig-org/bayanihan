@@ -1,9 +1,17 @@
 import { Hono } from "hono";
-import { applyChange, replay, resourceTypes, toBundle, authorize, type Store, type BixResource } from "@bayanihan/core";
+import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, type Store, type BixResource, type Signature } from "@bayanihan/core";
+import { importPublicJwk, type KeyStore } from "./keys.js";
 import { loadDirectory, permissionsForRecord, type Caller } from "./auth.js";
 
 export type ServerOptions = {
-  store: Store & { search?(type: string, params: Record<string, string>): Promise<BixResource[]>; history?(type: string, id: string): Promise<BixResource[]> };
+  store: Store & {
+    search?(type: string, params: Record<string, string>): Promise<BixResource[]>;
+    history?(type: string, id: string): Promise<BixResource[]>;
+    provenanceFor?(target: string): Promise<BixResource[]>;
+    version?(type: string, id: string, version: number): Promise<BixResource | null>;
+  };
+  /** Group signing keys. Without it, completed work is not signed. */
+  keys?: KeyStore;
   /** Who is calling: a BIX Person reference, or null for an anonymous visitor. */
   identify(req: Request): Promise<Caller>;
   /** Link a signed-in account to a new Person (POST /$me). */
@@ -15,6 +23,21 @@ export type ServerOptions = {
 /** The standard BIX API (spec, "Interoperability"): FHIR-shaped, Core on every write. */
 export function createApp(o: ServerOptions) {
   const app = new Hono();
+
+  /** Before committing: point Provenance at the exact version, and sign completed work with the owning group's key. */
+  async function seal(prev: BixResource | null, record: BixResource, provenance: BixResource): Promise<BixResource> {
+    const p = { ...provenance, target: [{ reference: `${record.resourceType}/${record.id}/_history/${record.meta.version}` }] };
+    const justDone = record.resourceType === "Task" && record["status"] === "completed" && prev?.["status"] !== "completed";
+    const justConfirmed = record.resourceType === "Task" && record["verification"] === "confirmed" && prev?.["verification"] !== "confirmed";
+    if (!o.keys || !(justDone || justConfirmed)) return p;
+    const dir = await loadDirectory(o.store, null, record);
+    const own = owningParty(record, dir);
+    const owner = own.organization ?? own.person;
+    if (!owner) return p;
+    const k = await o.keys.keyFor(owner);
+    const sig = await signRecord(record, k.privateKey, { reference: owner }, k.keyId, o.now());
+    return { ...p, signature: [sig] };
+  }
 
   app.get("/", (c) =>
     c.html(`<!doctype html><meta charset="utf-8"><title>Bayanihan Server</title>
@@ -79,7 +102,7 @@ export function createApp(o: ServerOptions) {
       for (const e of entries) {
         const prev = await o.store.get(e.resource.resourceType, e.resource.id);
         const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now() });
-        if (r.ok) await o.store.commit(r.record, r.provenance);
+        if (r.ok) await o.store.commit(r.record, await seal(prev, r.record, r.provenance));
         results.push(r.ok ? { ok: true, record: r.record } : { ok: false, reasons: r.reasons, current: prev });
       }
       return c.json({ resourceType: "Bundle", type: "transaction-response", entry: results }, results.every((r) => r.ok) ? 200 : 409);
@@ -87,10 +110,38 @@ export function createApp(o: ServerOptions) {
     if (bundle.type === "sync") {
       const changes = [];
       for (const e of entries) changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: await ctxFor(e.resource) });
-      const out = await replay(o.store, changes, o.now());
+      const sealing = { get: (t: string, i: string) => o.store.get(t, i),
+        commit: async (rec: BixResource, prov: BixResource) => o.store.commit(rec, await seal(await o.store.get(rec.resourceType, rec.id), rec, prov)) };
+      const out = await replay(sealing, changes, o.now());
       return c.json({ resourceType: "Bundle", type: "sync-response", accepted: out.accepted.map((a) => a.record), refused: out.refused });
     }
     return c.json({ error: "Bundle.type must be transaction or sync" }, 400);
+  });
+
+  /** A group's (or person's) public key, so anyone can check its signatures. */
+  app.get("/$keys/:type/:id", async (c) => {
+    const k = o.keys && (await o.keys.publicKeyFor(`${c.req.param("type")}/${c.req.param("id")}`));
+    return k ? c.json({ owner: `${c.req.param("type")}/${c.req.param("id")}`, keyId: k.keyId, alg: "Ed25519", publicJwk: k.publicJwk }) : c.json({ error: "no key" }, 404);
+  });
+
+  /** Check a record's signatures: who signed which version, and whether it is unchanged. */
+  app.get("/:type/:id/$verify", async (c) => {
+    const { type, id } = c.req.param();
+    const r = await o.store.get(type, id);
+    if (!r || !o.store.provenanceFor || !o.store.version || !o.keys) return c.json({ error: "not found" }, 404);
+    const me = (await o.identify(c.req.raw)).person;
+    if (!authorize(me, "view", r, await loadDirectory(o.store, me, r)).allowed) return c.json({ error: "not found" }, 404);
+    const checks = [];
+    for (const p of await o.store.provenanceFor(`${type}/${id}`)) {
+      for (const sig of (p["signature"] as Signature[] | undefined) ?? []) {
+        const v = Number(((p["target"] as { reference: string }[])[0]!.reference.split("/_history/")[1]));
+        const signed = await o.store.version(type, id, v);
+        const pub = await o.keys.publicKeyFor(sig.who.reference);
+        const ok = !!signed && !!pub && (await verifyRecord(signed, sig, await importPublicJwk(pub.publicJwk)));
+        checks.push({ version: v, signedBy: sig.who.reference, when: sig.when, unchanged: ok });
+      }
+    }
+    return c.json({ record: `${type}/${id}`, signatures: checks, allValid: checks.length > 0 && checks.every((x) => x.unchanged) });
   });
 
   /** First sign-in: create the caller's Person (nickname is enough) and link the account. */

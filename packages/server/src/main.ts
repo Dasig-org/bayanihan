@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createApp } from "./app.js";
 import { pgStore } from "./pg-store.js";
 import { verifyToken } from "./auth.js";
+import { pgKeys } from "./keys.js";
 
 const url = process.env.DATABASE_URL ?? "postgresql://postgres:postgres@127.0.0.1:54422/postgres";
 const secret = process.env.SUPABASE_JWT_SECRET ?? "super-secret-jwt-token-with-at-least-32-characters-long"; // local Supabase default
@@ -11,6 +12,7 @@ const store = pgStore(url);
 
 const app = createApp({
   store,
+  keys: pgKeys(store.sql),
   async identify(req) {
     if (devHeaders && req.headers.get("x-bix-person")) return { person: req.headers.get("x-bix-person") };
     const authUserId = await verifyToken(req, secret);

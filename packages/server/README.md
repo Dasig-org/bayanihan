@@ -10,6 +10,8 @@ The reference BIX server, like HAPI for FHIR. Stores BIX records in Postgres, an
 | `GET /{type}/{id}/_history` | Every version of a record |
 | `POST /` with a `transaction` Bundle | Apply changes now; `409` with the current state if refused |
 | `POST /` with a `sync` Bundle | Replay offline changes in the order they happened; refusals reported |
+| `GET /{type}/{id}/$verify` | Check a record's signatures: who signed which version, and whether it's unchanged |
+| `GET /$keys/{type}/{id}` | A group's or person's public key, for checking signatures anywhere |
 | `POST /$me` | First sign-in: creates the caller's Person (a nickname is enough) and links the account |
 
 ## Run locally
@@ -26,4 +28,6 @@ npm run dev -w @bayanihan/server   # http://localhost:8787
 
 **Local testing shortcut:** `BIX_DEV_HEADERS=1 npm run dev -w @bayanihan/server` also accepts an `x-bix-person` header. Off by default; never enable it on a shared server.
 
-**Not yet:** signing completed records with the group key, export endpoints (`/Person/{id}/$export`), short references (`LU-24`), files storage.
+**Signing.** When work is completed (or confirmed), the server signs that exact version with the owning group's Ed25519 key (a person's, for personal work), over its RFC 8785 form, and stores the signature on its Provenance. Private keys stay in `bix_keys`.
+
+**Not yet:** export endpoints (`/Person/{id}/$export`), short references (`LU-24`), files storage.
