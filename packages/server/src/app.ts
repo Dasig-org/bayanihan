@@ -13,6 +13,18 @@ export type ServerOptions = {
 export function createApp(o: ServerOptions) {
   const app = new Hono();
 
+  app.get("/", (c) =>
+    c.html(`<!doctype html><meta charset="utf-8"><title>Bayanihan Server</title>
+<body style="font-family:system-ui;max-width:640px;margin:40px auto;color:#0F172A;line-height:1.5">
+<h1>Bayanihan Server</h1><p>The reference BIX server. BIX v0.1 · Bayanihan Server 0.1.0</p>
+<ul>
+<li><a href="/metadata">GET /metadata</a>: what this server supports</li>
+<li>GET /{type}/{id}: read a record, e.g. <code>/Task/&lt;id&gt;</code></li>
+<li>GET /{type}?field=value: search, e.g. <a href="/Task">/Task</a></li>
+<li>GET /{type}/{id}/_history: every version of a record</li>
+<li>POST / with a <code>transaction</code> or <code>sync</code> Bundle: make changes</li>
+</ul></body>`));
+
   app.get("/metadata", (c) =>
     c.json({ resourceType: "CapabilityStatement", bix: "0.1", software: { name: "Bayanihan Server", version: "0.1.0" }, resourceTypes, interactions: ["read", "search", "history", "transaction", "export"] }));
 
