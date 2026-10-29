@@ -7,7 +7,7 @@ import { nodeDb } from "./node-db.js";
 describe("HTTP over TCP (the hub's network layer)", () => {
   it("serves the BIX API to another device over a socket: pair, read, upload, download", async () => {
     const s = await sqliteStore(nodeDb());
-    const app = createApp({ store: s.store, keys: s.keys, sequences: s.sequences, linkTokens: s.linkTokens, devices: s.devices, files: memoryFiles(), pairingCode: () => "QR-1",
+    const app = createApp({ store: s.store, keys: s.keys, sequences: s.sequences, linkTokens: s.linkTokens, devices: s.devices, files: s.files, pairingCode: () => "QR-1",
       async identify(req) { const h = req.headers.get("authorization"); return { person: h ? await s.devices.personFor(await hashToken(h.slice(7))) : null }; },
       now: () => new Date().toISOString(), newId: () => crypto.randomUUID() });
     const port = 18787;

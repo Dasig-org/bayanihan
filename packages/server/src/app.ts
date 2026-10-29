@@ -24,6 +24,8 @@ export type ServerOptions = {
   pairingCode?: () => string | null;
   /** Origins allowed to call this server from a browser (the Dasig web app). Default: any. */
   corsOrigins?: string[];
+  /** Turn CORS off on a phone or hub: only native apps call it, and React Native's Response has no body stream for middleware to rewrap. */
+  cors?: boolean;
   /** Where files are kept. Without it, uploads are refused. */
   files?: FileStore;
   /** Counters for short references (LU 2027-24). Without it, records get none. */
@@ -41,7 +43,7 @@ export type ServerOptions = {
 /** The standard BIX API (spec, "Interoperability"): FHIR-shaped, Core on every write. */
 export function createApp(o: ServerOptions) {
   const app = new Hono();
-  app.use("*", cors({ origin: o.corsOrigins ?? "*", allowHeaders: ["authorization", "content-type", "x-bix-person", "x-bix-link"], allowMethods: ["GET", "POST", "OPTIONS"] }));
+  if (o.cors !== false) app.use("*", cors({ origin: o.corsOrigins ?? "*", allowHeaders: ["authorization", "content-type", "x-bix-person", "x-bix-link"], allowMethods: ["GET", "POST", "OPTIONS"] }));
 
   /** Before committing: point Provenance at the exact version, and sign completed work with the owning group's key. */
   /** New Tasks, Needs, Offers and Decisions in a project get a short reference from the server. */
@@ -283,7 +285,7 @@ export function createApp(o: ServerOptions) {
     await o.store.commit(r.record, r.provenance);
     const token = newToken();
     await o.linkTokens.save(await hashToken(token), r.record.id);
-    return c.json({ link: r.record, token }, 201);
+    return c.json({ link: r.record, token, ...(o.pairingCode && o.devices ? { pairingCode: o.pairingCode() } : {}) }, 201);
   });
 
   async function openLink(token: string) {
@@ -403,8 +405,8 @@ export function createApp(o: ServerOptions) {
   /** First sign-in: create the caller's Person (nickname is enough) and link the account. */
   app.post("/$me", async (c) => {
     const caller = await o.identify(c.req.raw);
-    if (!caller.authUserId) return c.json({ error: "sign in first" }, 401);
     if (caller.person) return c.json(await o.store.get("Person", caller.person.split("/")[1]!));
+    if (!caller.authUserId) return c.json({ error: "sign in first" }, 401);
     if (!o.linkAccount) return c.json({ error: "this server does not link accounts" }, 501);
     const body = (await c.req.json()) as { nickname?: string };
     const id = o.newId();

@@ -3,7 +3,7 @@ import { generateGroupKey } from "@bayanihan/core";
 import type { KeyStore } from "./keys.js";
 import type { Sequences } from "./refs.js";
 import type { LinkTokens } from "./links.js";
-import type { FileMeta } from "./files.js";
+import { sha256hex, type FileMeta, type FileStore } from "./files.js";
 
 /** The few SQLite calls the store needs. Adapters: expo-sqlite on the phone, node:sqlite in tests. */
 export interface Db {
@@ -22,6 +22,7 @@ create table if not exists bix_keys (owner text primary key, key_id text not nul
 create table if not exists bix_sequences (prefix text primary key, next integer not null);
 create table if not exists bix_link_tokens (token_hash text primary key, link_id text not null);
 create table if not exists bix_files (hash text primary key, content_type text not null, size integer not null, uploaded_by text not null, shows_minors integer not null);
+create table if not exists bix_file_bytes (hash text primary key, data text not null);
 create table if not exists bix_devices (token_hash text primary key, person_id text not null, created_at text not null);
 `;
 
@@ -112,5 +113,22 @@ export async function sqliteStore(db: Db) {
     async save(tokenHash: string, person: string) { await db.run("insert into bix_devices values (?, ?, ?)", tokenHash, person, now()); },
     async personFor(tokenHash: string) { const r = await db.all<{ person_id: string }>("select person_id from bix_devices where token_hash = ?", tokenHash); return r[0]?.person_id ?? null; },
   };
-  return { store, keys, sequences, linkTokens, fileMeta, devices };
+  const b64 = (u: Uint8Array) => { let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
+  const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  /** Files kept in the same database (a phone or hub has nowhere else it needs to manage). */
+  const files: FileStore = {
+    async put(bytes, m) {
+      const hash = await sha256hex(bytes);
+      await db.run("insert or ignore into bix_file_bytes values (?, ?)", hash, b64(bytes));
+      const full = { ...m, hash, size: bytes.byteLength };
+      await fileMeta.save(full);
+      return (await fileMeta.load(hash)) ?? full;
+    },
+    async get(hash) {
+      const meta = await fileMeta.load(hash);
+      const r = await db.all<{ data: string }>("select data from bix_file_bytes where hash = ?", hash);
+      return meta && r[0] ? { bytes: unb64(r[0].data), meta } : null;
+    },
+  };
+  return { store, keys, sequences, linkTokens, fileMeta, files, devices };
 }
