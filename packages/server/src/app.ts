@@ -475,6 +475,27 @@ export function createApp(o: ServerOptions) {
   });
 
   /** How many have voted, and the counts once results may be shown (spec: showResults). */
+  /**
+   * What the caller may do with one record, so an app shows only the controls the server will accept.
+   * `edit` covers details, files and cancelling (BIX never deletes: a cancelled record keeps its history).
+   */
+  app.get("/:type/:id/$can", async (c) => {
+    const { type, id } = c.req.param();
+    if (!resourceTypes.includes(type)) return c.json({ error: `unknown type ${type}` }, 404);
+    const r = await o.store.get(type, id);
+    const me = (await o.identify(c.req.raw)).person;
+    if (!r || !me) return c.json({ error: "not found" }, 404);
+    const dir = await loadDirectory(o.store, me, r);
+    if (!authorize(me, "view", r, dir).allowed) return c.json({ error: "not found" }, 404);
+    const edit = (await canUpdate(me, r, r)) === null;
+    const personal = !!(r["person"] && !r["organization"]);
+    const who = type === "Initiative" ? (personal ? "Only you can change this project." : "Officers and core members can change this project.")
+      : type === "Task" ? "The people on it and the team's lead can change this."
+      : type === "Organization" ? "Officers can change the group's details."
+      : "The people in charge of it can change this.";
+    return c.json({ edit, who });
+  });
+
   app.get("/Decision/:id/$tally", async (c) => {
     const me = (await o.identify(c.req.raw)).person;
     const d = await o.store.get("Decision", c.req.param("id"));

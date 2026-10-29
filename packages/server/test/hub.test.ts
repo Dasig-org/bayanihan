@@ -53,5 +53,12 @@ describe("a phone hub on SQLite", () => {
 
     const story = await (await call(`/Person/${liza.person.id}/$export`, liza.token)).json();
     expect(story.entry.some((e: { resource: BixResource }) => e.resource.id === task.id)).toBe(true);
+
+    // Who may change the project: Ana (officer) yes; Liza (a team volunteer) can see it but not change it.
+    const can = async (token: string) => (await (await call(`/Initiative/${ini.id}/$can`, token)).json()) as { edit?: boolean };
+    expect((await can(ana.token)).edit).toBe(true);
+    expect((await can(liza.token)).edit).not.toBe(true);
+    expect((await commit(call, liza.token, { ...ini, title: "Mine now", meta: { version: 2 } })).status).toBe(409);
+    expect((await commit(call, ana.token, { ...ini, description: "Every Saturday in March", meta: { version: 2 } })).status).toBe(200);
   });
 });
