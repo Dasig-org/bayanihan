@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, countVotes, type Store, type BixResource, type Signature } from "@bayanihan/core";
+import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, verifyChallenge, countVotes, type Store, type BixResource, type Signature } from "@bayanihan/core";
 import type { KeyStore } from "./keys.js";
 import { prefixFor, withRef, REF_SYSTEM, type Sequences } from "./refs.js";
 import { loadDirectory, permissionsForRecord, type Caller } from "./auth.js";
@@ -96,6 +96,7 @@ export function createApp(o: ServerOptions) {
     if (authorize(me, "edit", prev, dir).allowed) return null;
     if (prev.resourceType === "Task" && prev["status"] === "ready" && next["status"] === "accepted" && authorize(me, "claim", prev, dir).allowed) return null;
     if (prev.resourceType === "Task" && prev["status"] === "requested" && (prev["owner"] as { reference?: string } | undefined)?.reference === me) return null;
+    if (prev.resourceType === "Person" && prev.id !== me.split("/")[1] && JSON.stringify(prev["publicKey"] ?? []) !== JSON.stringify(next["publicKey"] ?? [])) return "only the person can change their own keys";
     if (prev.resourceType === "Person" && (prev.id === me.split("/")[1] || permissionsForRecord(me, prev, dir).includes("member.manage"))) return null;
     if (prev.resourceType === "Organization" && permissionsForRecord(me, prev, dir).includes("org.manage")) return null;
     if (prev.resourceType === "Role" && permissionsForRecord(me, prev, dir).includes("member.manage")) return null;
@@ -458,10 +459,16 @@ export function createApp(o: ServerOptions) {
    */
   app.post("/$pair", async (c) => {
     if (!o.devices || !o.pairingCode) return c.json({ error: "this server is not a hub" }, 501);
-    const body = (await c.req.json()) as { code?: string; nickname?: string; person?: BixResource };
+    const body = (await c.req.json()) as { code?: string; nickname?: string; person?: BixResource; proof?: string };
     const code = o.pairingCode();
     if (!code || body.code !== code) return c.json({ error: "this pairing code isn't valid; scan the hub's QR again" }, 403);
     let person = body.person && body.person.resourceType === "Person" ? await o.store.get("Person", body.person.id) : null;
+    // A Person with keys can only be paired by a phone holding one of them: it signs the pairing code.
+    const keys = ((person ?? body.person)?.["publicKey"] as { key: string; status: string }[] | undefined ?? []).filter((k) => k.status === "active");
+    if (keys.length) {
+      const who = `Person/${(person ?? body.person)!.id}`;
+      if (!body.proof || !keys.some((k) => verifyChallenge(code, who, "bix-pair", body.proof!, k.key))) return c.json({ error: "this phone can't prove it's that person" }, 403);
+    }
     if (!person) {
       const p: BixResource = body.person?.resourceType === "Person" ? { ...body.person, meta: { version: 1 } } : { resourceType: "Person", id: o.newId(), meta: { version: 1 }, name: { text: body.nickname || "Friend", use: "nickname" }, credit: "nickname", sharing: "private" };
       const r = applyChange(null, p, { actor: { type: "person", person: { reference: `Person/${p.id}` } }, permissions: [], now: o.now(), newId: o.newId });

@@ -10,6 +10,7 @@ export function canCreate(me: string, r: BixResource, dir: Directory): string | 
   const member = perms.has("member") || perms.has("team.member");
   switch (r.resourceType) {
     case "Organization": return null; // anyone may start a group; the server makes them its officer
+    case "Person": if (r["publicKey"]) return "only the person can add their own keys";
     case "Person": return ref(r["managedBy"]) && perms.has("member.manage") ? null : "people create their own Person by signing in, or a group adds a nickname";
     case "Role": {
       if (perms.has("member.manage")) return null;

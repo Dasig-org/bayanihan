@@ -54,6 +54,24 @@ describe("a phone hub on SQLite", () => {
     const story = await (await call(`/Person/${liza.person.id}/$export`, liza.token)).json();
     expect(story.entry.some((e: { resource: BixResource }) => e.resource.id === task.id)).toBe(true);
 
+    // A person's own key: Liza adds hers; Ana, an officer, can't replace it.
+    const { generatePersonKey, keyIdFor } = await import("@bayanihan/core");
+    const k = await generatePersonKey();
+    const lizaP = await (await call(`/Person/${liza.person.id}`, liza.token)).json();
+    const keyed = { ...lizaP, meta: { version: lizaP.meta.version + 1 }, publicKey: [{ kid: keyIdFor(k.publicKey), alg: "Ed25519", key: k.publicKey, status: "active" }] };
+    expect((await commit(call, liza.token, keyed)).status).toBe(200);
+    const k2 = await generatePersonKey();
+    const hijack = { ...keyed, meta: { version: keyed.meta.version + 1 }, publicKey: [{ kid: keyIdFor(k2.publicKey), alg: "Ed25519", key: k2.publicKey, status: "active" }] };
+    const refused = await commit(call, ana.token, hijack);
+    expect(refused.status).toBe(409);
+    expect(JSON.stringify(await refused.json())).toContain("only the person can change their own keys");
+
+    // Pairing as a Person who has a key needs proof: someone who only knows Liza's id can't pair as her.
+    const { signChallenge } = await import("@bayanihan/core");
+    expect((await call("/$pair", null, { code: "PAIR-1234", person: keyed })).status).toBe(403);
+    const proof = signChallenge("PAIR-1234", `Person/${liza.person.id}`, "bix-pair", k.privateKey);
+    expect((await call("/$pair", null, { code: "PAIR-1234", person: keyed, proof })).status).toBe(201);
+
     // Who may change the project: Ana (officer) yes; Liza (a team volunteer) can see it but not change it.
     const can = async (token: string) => (await (await call(`/Initiative/${ini.id}/$can`, token)).json()) as { edit?: boolean };
     expect((await can(ana.token)).edit).toBe(true);

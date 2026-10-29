@@ -40,3 +40,19 @@ export async function signRecord(record: BixResource, privateKeyHex: string, who
 export async function verifyRecord(record: BixResource, sig: Signature, publicKeyHex: string): Promise<boolean> {
   try { return ed.verify(unb64url(sig.value), enc.encode(canonical(record)), hexToBytes(publicKeyHex)); } catch { return false; }
 }
+
+/**
+ * A person's own key, one per phone. The private key never leaves the phone. It proves "this phone is Mia" to any
+ * Bayanihan Server holding Mia's Person record, without codes or links, by signing a server's challenge.
+ */
+export const generatePersonKey = generateGroupKey;
+/** The key id a Person record lists: the first 16 hex characters of the public key's SHA-256. */
+export const keyIdFor = (publicKeyHex: string) => sha256Hex(hexToBytes(publicKeyHex)).slice(0, 16);
+/** What the phone signs: the server's one-time challenge, bound to the person and the server, so it can't be replayed elsewhere. */
+const challengeBytes = (challenge: string, person: string, audience: string) => enc.encode(`bix-person-proof\n${audience}\n${person}\n${challenge}`);
+export function signChallenge(challenge: string, person: string, audience: string, privateKeyHex: string): string {
+  return b64url(ed.sign(challengeBytes(challenge, person, audience), hexToBytes(privateKeyHex)));
+}
+export function verifyChallenge(challenge: string, person: string, audience: string, signature: string, publicKeyHex: string): boolean {
+  try { return ed.verify(unb64url(signature), challengeBytes(challenge, person, audience), hexToBytes(publicKeyHex)); } catch { return false; }
+}
