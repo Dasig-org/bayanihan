@@ -253,9 +253,15 @@ export function createApp(o: ServerOptions) {
     const me = (await o.identify(c.req.raw)).person;
     if (!me) return c.json({ error: "sign in to add files" }, 401);
     if (!o.files) return c.json({ error: "this server does not keep files" }, 501);
-    const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim();
+    let type = (c.req.header("content-type") ?? "").split(";")[0]!.trim();
+    let bytes: Uint8Array;
+    if (type === "application/json" && c.req.query("b64") === "1") {
+      // For phones: React Native can't send binary bodies reliably, so files may come as base64 JSON.
+      const j = (await c.req.json()) as { contentType?: string; data?: string };
+      type = j.contentType ?? "";
+      bytes = Uint8Array.from(atob(j.data ?? ""), (ch) => ch.charCodeAt(0));
+    } else bytes = new Uint8Array(await c.req.arrayBuffer());
     if (!ALLOWED_TYPES.some((t) => t.test(type))) return c.json({ error: `files of type ${type || "unknown"} aren't accepted` }, 415);
-    const bytes = new Uint8Array(await c.req.arrayBuffer());
     if (!bytes.byteLength) return c.json({ error: "empty file" }, 400);
     if (bytes.byteLength > MAX_FILE_BYTES) return c.json({ error: "files up to 15 MB" }, 413);
     const showsMinors = c.req.query("showsMinors") === "true";
@@ -280,6 +286,10 @@ export function createApp(o: ServerOptions) {
       }
     }
     if (!allowed) return c.json({ error: "not found" }, 404);
+    if (c.req.query("b64") === "1") {
+      let bin = ""; for (let i = 0; i < f.bytes.length; i += 0x8000) bin += String.fromCharCode(...f.bytes.subarray(i, i + 0x8000));
+      return c.json({ contentType: f.meta.contentType, data: btoa(bin) });
+    }
     return new Response(f.bytes as Uint8Array<ArrayBuffer>, { headers: { "content-type": f.meta.contentType, "cache-control": "private, max-age=31536000, immutable", "x-content-type-options": "nosniff" } });
   });
 
