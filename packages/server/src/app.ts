@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, type Store, type BixResource, type Signature } from "@bayanihan/core";
+import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, countVotes, type Store, type BixResource, type Signature } from "@bayanihan/core";
 import type { KeyStore } from "./keys.js";
 import { prefixFor, withRef, REF_SYSTEM, type Sequences } from "./refs.js";
 import { loadDirectory, permissionsForRecord, type Caller } from "./auth.js";
@@ -47,6 +47,14 @@ export function createApp(o: ServerOptions) {
 
   /** Before committing: point Provenance at the exact version, and sign completed work with the owning group's key. */
   /** New Tasks, Needs, Offers and Decisions in a project get a short reference from the server. */
+  /** A Decision's outcome is counted here, never trusted from the client (spec: "Decisions and voting"). */
+  async function recount(record: BixResource): Promise<BixResource> {
+    if (record.resourceType !== "Decision" || record["status"] !== "decided" || !o.store.search) return record;
+    const votes = await o.store.search("Vote", { decision: `Decision/${record.id}` });
+    const out = countVotes(record, votes);
+    return { ...record, status: out.status, outcome: { option: out.option, tally: out.tally, decidedAt: o.now() } };
+  }
+
   async function reference(prev: BixResource | null, record: BixResource): Promise<BixResource> {
     if (prev || !o.sequences || !["Task", "Need", "Offer", "Decision"].includes(record.resourceType)) return record;
     const dir = await loadDirectory(o.store, null, record);
@@ -81,7 +89,11 @@ export function createApp(o: ServerOptions) {
     if (authorize(me, "edit", prev, dir).allowed) return null;
     if (prev.resourceType === "Task" && prev["status"] === "ready" && next["status"] === "accepted" && authorize(me, "claim", prev, dir).allowed) return null;
     if (prev.resourceType === "Task" && prev["status"] === "requested" && (prev["owner"] as { reference?: string } | undefined)?.reference === me) return null;
-    if (prev.resourceType === "Decision" || prev.resourceType === "Role") return permissionsForRecord(me, prev, dir).length ? null : "not yours to change";
+    if (prev.resourceType === "Person" && (prev.id === me.split("/")[1] || permissionsForRecord(me, prev, dir).includes("member.manage"))) return null;
+    if (prev.resourceType === "Organization" && permissionsForRecord(me, prev, dir).includes("org.manage")) return null;
+    if (prev.resourceType === "Role" && permissionsForRecord(me, prev, dir).includes("member.manage")) return null;
+    if (prev.resourceType === "Team" && permissionsForRecord(me, prev, dir).some((p) => ["task.assign", "member.manage", "org.manage"].includes(p))) return null;
+    if (prev.resourceType === "Decision" || prev.resourceType === "Role" || prev.resourceType === "Initiative" || prev.resourceType === "Position") return permissionsForRecord(me, prev, dir).some((p) => ["initiative.plan", "org.manage", "task.assign", "member.manage"].includes(p)) ? null : "not yours to change";
     return "only the people on it, or its lead, can change this";
   }
 
@@ -168,7 +180,7 @@ export function createApp(o: ServerOptions) {
         const why = prev ? await canUpdate(me, prev, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource));
         if (why) { results.push({ ok: false, reasons: [why], current: prev }); continue; }
         const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now() });
-        let committed = r.ok ? await reference(prev, r.record) : null;
+        let committed = r.ok ? await recount(await reference(prev, r.record)) : null;
         if (r.ok && committed) {
           await o.store.commit(committed, await seal(prev, committed, r.provenance));
           if (!prev && committed.resourceType === "Organization") await founderRole(me, committed);
@@ -271,12 +283,14 @@ export function createApp(o: ServerOptions) {
     const me = (await o.identify(c.req.raw)).person;
     if (!me) return c.json({ error: "sign in first" }, 401);
     if (!o.linkTokens) return c.json({ error: "this server does not make links" }, 501);
-    const body = (await c.req.json()) as { target: { reference: string }; grants: string[]; audience?: string; preview?: string; expires?: string };
+    const body = (await c.req.json()) as { target: { reference: string }; grants: string[]; audience?: string; preview?: string; expires?: string; role?: string };
     const [t, id] = body.target?.reference?.split("/") ?? [];
     const target = t && id ? await o.store.get(t, id) : null;
     if (!target) return c.json({ error: "target not found" }, 404);
     const link: BixResource = { resourceType: "ShareLink", id: o.newId(), meta: { version: 1 }, target: body.target, grants: body.grants,
       audience: body.audience ?? "anyone-with-link", preview: body.preview ?? "title-only", createdBy: { reference: me }, status: "active", ...(body.expires ? { expires: body.expires } : {}) };
+    // The role a group link gives (stored as an extension; BIX ShareLink grants say what, this says as whom).
+    if (body.role && t === "Organization") (link as Record<string, unknown>)["extension"] = [{ url: "bayanihan:link-role", value: body.role }];
     const dir = await loadDirectory(o.store, me, target);
     const why = canCreate(me, { ...link, owner: body.target, organization: target["organization"] } as BixResource, dir);
     if (why && !permissionsForRecord(me, target, dir).length) return c.json({ error: why }, 403);
@@ -286,6 +300,35 @@ export function createApp(o: ServerOptions) {
     const token = newToken();
     await o.linkTokens.save(await hashToken(token), r.record.id);
     return c.json({ link: r.record, token, ...(o.pairingCode && o.devices ? { pairingCode: o.pairingCode() } : {}) }, 201);
+  });
+
+  /** Links you made, or links to something you lead. */
+  app.get("/$links", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    if (!me || !o.store.search) return c.json({ error: "sign in first" }, 401);
+    const all = await o.store.search("ShareLink", {});
+    const mine = [];
+    for (const l of all) {
+      const [t, id] = (l["target"] as { reference: string }).reference.split("/");
+      const target = await o.store.get(t!, id!);
+      const lead = target ? permissionsForRecord(me, target, await loadDirectory(o.store, me, target)).some((p) => ["task.assign", "member.manage", "org.manage"].includes(p)) : false;
+      if ((l["createdBy"] as { reference: string }).reference === me || lead) mine.push({ link: l, target: target ? { resourceType: target.resourceType, id: target.id, title: target["title"] ?? target["name"] } : null });
+    }
+    return c.json(mine);
+  });
+  app.post("/$links/:id/revoke", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    const l = await o.store.get("ShareLink", c.req.param("id"));
+    if (!me || !l) return c.json({ error: "not found" }, 404);
+    const [t, id] = (l["target"] as { reference: string }).reference.split("/");
+    const target = await o.store.get(t!, id!);
+    const lead = target ? permissionsForRecord(me, target, await loadDirectory(o.store, me, target)).some((p) => ["task.assign", "member.manage", "org.manage"].includes(p)) : false;
+    if ((l["createdBy"] as { reference: string }).reference !== me && !lead) return c.json({ error: "not yours to turn off" }, 403);
+    const next = { ...l, meta: { ...l.meta, version: l.meta.version + 1 }, status: "revoked" };
+    const r = applyChange(l, next, { actor: { type: "person", person: { reference: me } }, permissions: [], now: o.now(), newId: o.newId });
+    if (!r.ok) return c.json({ error: r.reasons }, 409);
+    await o.store.commit(r.record, r.provenance);
+    return c.json(r.record);
   });
 
   async function openLink(token: string) {
@@ -322,6 +365,18 @@ export function createApp(o: ServerOptions) {
     const me = (await o.identify(c.req.raw)).person;
     if (!me) return c.json({ error: "tell us your name first" }, 401);
     const l = await openLink(c.req.param("token"));
+    if (l && l.target.resourceType === "Organization" && (l.link["grants"] as string[]).includes("join-org")) {
+      if (((l.link["blocked"] as { reference: string }[] | undefined) ?? []).some((b) => b.reference === me)) return c.json({ error: "this link can't add you" }, 403);
+      const org = { reference: `Organization/${l.target.id}` };
+      const existing = o.store.search ? (await o.store.search("Role", { person: me, organization: org.reference })).find((r) => r["status"] === "active") : null;
+      if (existing) return c.json(existing);
+      const code = ((l.link["extension"] as { url: string; value: string }[] | undefined) ?? []).find((x) => x.url === "bayanihan:link-role")?.value ?? "volunteer-episodic";
+      const role: BixResource = { resourceType: "Role", id: o.newId(), meta: { version: 1 }, person: { reference: me }, organization: org, code: { system: "bayanihan:role", code }, status: "active", period: { start: o.now() } };
+      const rr = applyChange(null, role, { actor: { type: "rule", rule: "join-through-link" }, permissions: [], now: o.now(), newId: o.newId });
+      if (!rr.ok) return c.json({ error: rr.reasons }, 409);
+      await o.store.commit(rr.record, rr.provenance);
+      return c.json(rr.record);
+    }
     if (!l || !(l.link["grants"] as string[]).includes("join-team") || l.target.resourceType !== "Team") return c.json({ error: "this link can't add you to a team" }, 404);
     if (((l.link["blocked"] as { reference: string }[] | undefined) ?? []).some((b) => b.reference === me)) return c.json({ error: "this link can't add you" }, 403);
     const team = l.target;
