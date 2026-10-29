@@ -85,6 +85,13 @@ export function createApp(o: ServerOptions) {
 
   /** Changing an existing record: the people on it or its lead; or a claim, or answering an ask, which Core's rules check. */
   async function canUpdate(me: string, prev: BixResource, next: BixResource): Promise<string | null> {
+    if (prev.resourceType === "Task" && ["accepted", "in-progress", "completed"].includes(String(next["status"])) && prev["status"] !== next["status"] && ["ready", "requested"].includes(String(prev["status"]))) {
+      for (const d of (next["dependsOn"] as { reference: string }[] | undefined) ?? []) {
+        const [dt, did] = d.reference.split("/");
+        const dep = await o.store.get(dt!, did!);
+        if (dep && dep["status"] !== "completed") return `waiting on "${dep["title"] ?? "another task"}"`;
+      }
+    }
     const dir = await loadDirectory(o.store, me, prev);
     if (authorize(me, "edit", prev, dir).allowed) return null;
     if (prev.resourceType === "Task" && prev["status"] === "ready" && next["status"] === "accepted" && authorize(me, "claim", prev, dir).allowed) return null;
@@ -457,10 +464,47 @@ export function createApp(o: ServerOptions) {
     return c.json({ person, token }, 201);
   });
 
+  /** How many have voted, and the counts once results may be shown (spec: showResults). */
+  app.get("/Decision/:id/$tally", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    const d = await o.store.get("Decision", c.req.param("id"));
+    if (!d || !o.store.search || !authorize(me, "view", d, await loadDirectory(o.store, me, d)).allowed) return c.json({ error: "not found" }, 404);
+    const votes = await o.store.search("Vote", { decision: `Decision/${d.id}` });
+    const out = countVotes(d, votes);
+    const voters = new Set(votes.map((v) => (v["voter"] as { reference: string }).reference));
+    const mine = votes.filter((v) => (v["voter"] as { reference: string }).reference === me).sort((a, b) => String(b["cast"]).localeCompare(String(a["cast"])))[0];
+    const show = d["status"] === "decided" || (d["showResults"] === "after-voting" && !!mine);
+    return c.json({ voted: voters.size, eligible: ((d["eligible"] as unknown[]) ?? []).length, mine: mine?.["choice"] ?? null, tally: show ? out.tally : null });
+  });
+
+  /** Ask to delete your account: after 14 days your profile is removed; groups keep the work, unnamed (spec: Privacy and safety). */
+  app.post("/$me/delete", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    if (!me) return c.json({ error: "sign in first" }, 401);
+    const p = (await o.store.get("Person", me.split("/")[1]!))!;
+    const cancel = c.req.query("cancel") === "1";
+    const due = new Date(Date.now() + 14 * 86400000).toISOString();
+    const ext = ((p["extension"] as { url: string }[] | undefined) ?? []).filter((x) => x.url !== "bayanihan:delete-after");
+    const next = { ...p, meta: { ...p.meta, version: p.meta.version + 1 }, extension: cancel ? ext : [...ext, { url: "bayanihan:delete-after", value: due }] };
+    const r = applyChange(p, next, { actor: { type: "person", person: { reference: me } }, permissions: [], now: o.now(), newId: o.newId });
+    if (!r.ok) return c.json({ error: r.reasons }, 409);
+    await o.store.commit(r.record, r.provenance);
+    return c.json({ deleteAfter: cancel ? null : due });
+  });
+  /** Remove profiles whose grace period has ended. Run on each start of a session. */
+  async function processDeletions(me: string) {
+    const p = await o.store.get("Person", me.split("/")[1]!);
+    const due = ((p?.["extension"] as { url: string; value: string }[] | undefined) ?? []).find((x) => x.url === "bayanihan:delete-after")?.value;
+    if (!p || !due || due > o.now()) return;
+    const gone: BixResource = { resourceType: "Person", id: p.id, meta: { ...p.meta, version: p.meta.version + 1 }, name: { text: "A former volunteer", use: "nickname" }, credit: "anonymous", sharing: "private" };
+    const r = applyChange(p, gone, { actor: { type: "rule", rule: "account-deletion" }, permissions: [], now: o.now(), newId: o.newId });
+    if (r.ok) await o.store.commit(r.record, r.provenance);
+  }
+
   /** First sign-in: create the caller's Person (nickname is enough) and link the account. */
   app.post("/$me", async (c) => {
     const caller = await o.identify(c.req.raw);
-    if (caller.person) return c.json(await o.store.get("Person", caller.person.split("/")[1]!));
+    if (caller.person) { await processDeletions(caller.person); return c.json(await o.store.get("Person", caller.person.split("/")[1]!)); }
     if (!caller.authUserId) return c.json({ error: "sign in first" }, 401);
     if (!o.linkAccount) return c.json({ error: "this server does not link accounts" }, 501);
     const body = (await c.req.json()) as { nickname?: string };
