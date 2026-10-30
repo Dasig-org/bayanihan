@@ -22,6 +22,12 @@ export type ServerOptions = {
   devices?: { save(tokenHash: string, person: string): Promise<void>; personFor(tokenHash: string): Promise<string | null> };
   /** The pairing code shown on the hub as a QR. Changing it stops new pairings with the old code. */
   pairingCode?: () => string | null;
+  /**
+   * Open sign-up for a hosted server (the Dasig Ecosystem): GET /$challenge and POST /$join. A phone joins with a nickname,
+   * or brings its Person; a Person with keys must sign the server's one-time challenge. `audience` is this server's public
+   * address, bound into every proof so a signature made for one server can't be used on another.
+   */
+  openJoin?: { audience: string; perHour?: number };
   /** Origins allowed to call this server from a browser (the Dasig web app). Default: any. */
   corsOrigins?: string[];
   /** Turn CORS off on a phone or hub: only native apps call it, and React Native's Response has no body stream for middleware to rewrap. */
@@ -457,6 +463,50 @@ export function createApp(o: ServerOptions) {
    * Pair a phone with this hub (spec: hubs pair by QR). The QR carries the hub's address and a pairing code.
    * The phone sends the code and a nickname; the hub creates (or reuses) its Person and returns a device token.
    */
+  // ── Open sign-up (hosted servers) ────────────────────────────────────────────
+  const challenges = new Map<string, number>();
+  const joins = new Map<string, number[]>();
+  const clientIp = (req: Request) => req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
+  app.get("/$challenge", (c) => {
+    if (!o.openJoin) return c.json({ error: "this server doesn't take sign-ups" }, 404);
+    const now = Date.now();
+    for (const [k, t] of challenges) if (now - t > 5 * 60_000) challenges.delete(k);
+    const challenge = newToken();
+    challenges.set(challenge, now);
+    return c.json({ challenge, audience: o.openJoin.audience, expiresIn: 300 });
+  });
+  app.post("/$join", async (c) => {
+    if (!o.openJoin || !o.devices) return c.json({ error: "this server doesn't take sign-ups" }, 404);
+    const ip = clientIp(c.req.raw), now = Date.now();
+    const recent = (joins.get(ip) ?? []).filter((t) => now - t < 3600_000);
+    if (recent.length >= (o.openJoin.perHour ?? 10)) return c.json({ error: "too many sign-ups from here; try again in an hour" }, 429);
+    recent.push(now); joins.set(ip, recent);
+    const body = (await c.req.json().catch(() => ({}))) as { nickname?: string; person?: BixResource; challenge?: string; proof?: string };
+    const brought = body.person?.resourceType === "Person" ? body.person : null;
+    let person = brought ? await o.store.get("Person", brought.id) : null;
+    const keys = (((person ?? brought)?.["publicKey"] as { key: string; status: string }[] | undefined) ?? []).filter((k) => k.status === "active");
+    if (person && !keys.length) return c.json({ error: "that person is already here; sign in from the phone that has their key" }, 409);
+    if (keys.length) {
+      const fresh = body.challenge && challenges.has(body.challenge) && now - challenges.get(body.challenge)! < 5 * 60_000;
+      if (body.challenge) challenges.delete(body.challenge);
+      const who = `Person/${(person ?? brought)!.id}`;
+      if (!fresh || !body.proof || !keys.some((k) => verifyChallenge(body.challenge!, who, o.openJoin!.audience, body.proof!, k.key)))
+        return c.json({ error: "this phone can't prove it's that person" }, 403);
+    }
+    if (!person) {
+      const nickname = (body.nickname ?? (brought?.["name"] as { text?: string } | undefined)?.text ?? "Friend").toString().trim().slice(0, 60) || "Friend";
+      const p: BixResource = brought ? { ...brought, meta: { version: 1 } } : { resourceType: "Person", id: o.newId(), meta: { version: 1 }, name: { text: nickname, use: "nickname" }, credit: "nickname", sharing: "private" };
+      delete (p as Record<string, unknown>)["managedBy"];
+      const r = applyChange(null, p, { actor: { type: "person", person: { reference: `Person/${p.id}` } }, permissions: [], now: o.now(), newId: o.newId });
+      if (!r.ok) return c.json({ error: r.reasons }, 400);
+      await o.store.commit(r.record, r.provenance);
+      person = r.record;
+    }
+    const token = newToken();
+    await o.devices.save(await hashToken(token), `Person/${person.id}`);
+    return c.json({ person, token }, 201);
+  });
+
   app.post("/$pair", async (c) => {
     if (!o.devices || !o.pairingCode) return c.json({ error: "this server is not a hub" }, 501);
     const body = (await c.req.json()) as { code?: string; nickname?: string; person?: BixResource; proof?: string };
