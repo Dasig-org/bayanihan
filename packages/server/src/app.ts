@@ -78,8 +78,43 @@ export function createApp(o: ServerOptions) {
   }
   const personCard = (p: BixResource): BixResource => {
     const anon = p["credit"] === "anonymous";
-    return { resourceType: "Person", id: p.id, meta: p.meta, name: anon ? { text: "A volunteer", use: "nickname" } : p["name"], ...(p["photo"] && !anon ? { photo: p["photo"] } : {}) };
+    // bayanihan:profile-visibility "nickname-only": groups see the nickname, never the photo, skills or the line about you.
+    const minimal = ((p["extension"] as { url: string; value: string }[] | undefined) ?? []).some((x) => x.url === "bayanihan:profile-visibility" && x.value === "nickname-only");
+    return { resourceType: "Person", id: p.id, meta: p.meta, name: anon ? { text: "A volunteer", use: "nickname" } : p["name"], ...(p["photo"] && !anon && !minimal ? { photo: p["photo"] } : {}) };
   };
+
+  /**
+   * Who can see a group or project (extension bayanihan:visibility): "group" (members only; no invite links),
+   * "invited" (members and people they invite; nothing public), "public" (a public summary can be listed).
+   * A project is never more open than its group: the most restrictive of the two applies.
+   */
+  type Visibility = "group" | "invited" | "public";
+  const RANK: Record<Visibility, number> = { group: 0, invited: 1, public: 2 };
+  const ownVisibility = (r: BixResource | null | undefined): Visibility | null => {
+    if (!r) return null;
+    const v = ((r["extension"] as { url: string; value: string }[] | undefined) ?? []).find((x) => x.url === "bayanihan:visibility")?.value;
+    if (v === "group" || v === "invited" || v === "public") return v;
+    return r["publicSummary"] === false ? "invited" : "public";
+  };
+  async function visibilityFor(record: BixResource): Promise<Visibility> {
+    const dir = await loadDirectory(o.store, null, record);
+    const ini = record.resourceType === "Initiative" ? record : dir.initiatives[0];
+    const orgRef = (ini?.["organization"] ?? record["organization"] ?? dir.teams[0]?.["organization"]) as { reference?: string } | undefined;
+    const org = record.resourceType === "Organization" ? record : orgRef?.reference ? await o.store.get("Organization", orgRef.reference.split("/")[1]!) : null;
+    const vs = [ownVisibility(org), record.resourceType === "Organization" ? null : ownVisibility(ini)].filter(Boolean) as Visibility[];
+    return vs.length ? vs.reduce((a, b) => (RANK[a] <= RANK[b] ? a : b)) : "public";
+  }
+  /** Changes that would show private work to outsiders are refused, whoever makes them. */
+  async function privacyWhy(r: BixResource): Promise<string | null> {
+    if (r.resourceType === "Task" && r["audience"] === "open" && (await visibilityFor(r)) !== "public")
+      return "this group or project isn't public, so its work can't be shown to everyone; invite volunteers with a link instead";
+    if (r.resourceType === "Initiative" && r["organization"]) {
+      const org = await o.store.get("Organization", (r["organization"] as { reference: string }).reference.split("/")[1]!);
+      const mine = ownVisibility(r)!, group = ownVisibility(org);
+      if (group && RANK[mine] > RANK[group]) return "a project can't be more open than its group; change the group's setting first";
+    }
+    return null;
+  }
 
   /** Whoever starts a group becomes its officer, recorded by rule. */
   async function founderRole(me: string, org: BixResource) {
@@ -191,7 +226,7 @@ export function createApp(o: ServerOptions) {
       const results = [];
       for (const e of entries) {
         const prev = await o.store.get(e.resource.resourceType, e.resource.id);
-        const why = prev ? await canUpdate(me, prev, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource));
+        const why = (prev ? await canUpdate(me, prev, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource))) ?? (await privacyWhy(e.resource));
         if (why) { results.push({ ok: false, reasons: [why], current: prev }); continue; }
         const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now() });
         let committed = r.ok ? await recount(await reference(prev, r.record)) : null;
@@ -208,7 +243,7 @@ export function createApp(o: ServerOptions) {
       const refusedNew = [];
       for (const e of entries) {
         const prevRec = await o.store.get(e.resource.resourceType, e.resource.id);
-        const why = prevRec ? await canUpdate(me, prevRec, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource));
+        const why = (prevRec ? await canUpdate(me, prevRec, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource))) ?? (await privacyWhy(e.resource));
         if (why) { refusedNew.push({ record: e.resource, reasons: [why], current: prevRec }); continue; }
         changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: await ctxFor(e.resource) });
       }
@@ -307,14 +342,18 @@ export function createApp(o: ServerOptions) {
     const me = (await o.identify(c.req.raw)).person;
     if (!me) return c.json({ error: "sign in first" }, 401);
     if (!o.linkTokens) return c.json({ error: "this server does not make links" }, 501);
-    const body = (await c.req.json()) as { target: { reference: string }; grants: string[]; audience?: string; preview?: string; expires?: string; role?: string };
+    const body = (await c.req.json()) as { target: { reference: string }; grants: string[]; audience?: string; preview?: string; expires?: string; role?: string; approval?: boolean };
     const [t, id] = body.target?.reference?.split("/") ?? [];
     const target = t && id ? await o.store.get(t, id) : null;
     if (!target) return c.json({ error: "target not found" }, 404);
+    if ((await visibilityFor(target)) === "group") return c.json({ error: "this group is set to only its members, so it has no invite links; change who can see it to invite people" }, 403);
     const link: BixResource = { resourceType: "ShareLink", id: o.newId(), meta: { version: 1 }, target: body.target, grants: body.grants,
       audience: body.audience ?? "anyone-with-link", preview: body.preview ?? "title-only", createdBy: { reference: me }, status: "active", ...(body.expires ? { expires: body.expires } : {}) };
     // The role a group link gives (stored as an extension; BIX ShareLink grants say what, this says as whom).
-    if (body.role && t === "Organization") (link as Record<string, unknown>)["extension"] = [{ url: "bayanihan:link-role", value: body.role }];
+    const ext: { url: string; value: string }[] = [];
+    if (body.role && (t === "Organization" || t === "Initiative")) ext.push({ url: "bayanihan:link-role", value: body.role });
+    if (body.approval) ext.push({ url: "bayanihan:link-approval", value: "required" });
+    if (ext.length) (link as Record<string, unknown>)["extension"] = ext;
     const dir = await loadDirectory(o.store, me, target);
     const why = canCreate(me, { ...link, owner: body.target, organization: target["organization"] } as BixResource, dir);
     if (why && !permissionsForRecord(me, target, dir).length) return c.json({ error: why }, 403);
@@ -373,7 +412,7 @@ export function createApp(o: ServerOptions) {
     const { link, target } = l;
     const preview = link["preview"] as string;
     const base = { resourceType: target.resourceType, id: target.id, grants: link["grants"], createdBy: link["createdBy"] };
-    if (preview === "generic") return c.json({ ...base, title: "An open step in your group" });
+    if (preview === "generic") return c.json({ ...base, title: "You're invited to a group on Dasig" });
     const dir = await loadDirectory(o.store, null, target);
     const org = dir.initiatives[0]?.["organization"] ?? target["organization"];
     const orgRec = org ? await o.store.get("Organization", (org as { reference: string }).reference.split("/")[1]!) : null;
@@ -389,13 +428,24 @@ export function createApp(o: ServerOptions) {
     const me = (await o.identify(c.req.raw)).person;
     if (!me) return c.json({ error: "tell us your name first" }, 401);
     const l = await openLink(c.req.param("token"));
+    if (l && (await visibilityFor(l.target)) === "group") return c.json({ error: "this link was turned off" }, 404);
+    const linkExt = ((l?.link["extension"] as { url: string; value: string }[] | undefined) ?? []);
+    const approval = linkExt.some((x) => x.url === "bayanihan:link-approval" && x.value === "required");
+    // A project link joins its group as a volunteer; the person then sees the project and chooses a team.
+    if (l && l.target.resourceType === "Initiative" && (l.link["grants"] as string[]).includes("join-org") && l.target["organization"]) {
+      const orgRef = l.target["organization"] as { reference: string };
+      const org = await o.store.get("Organization", orgRef.reference.split("/")[1]!);
+      if (org) l.target = { ...org, ["__project"]: l.target } as BixResource;
+    }
     if (l && l.target.resourceType === "Organization" && (l.link["grants"] as string[]).includes("join-org")) {
       if (((l.link["blocked"] as { reference: string }[] | undefined) ?? []).some((b) => b.reference === me)) return c.json({ error: "this link can't add you" }, 403);
       const org = { reference: `Organization/${l.target.id}` };
       const existing = o.store.search ? (await o.store.search("Role", { person: me, organization: org.reference })).find((r) => r["status"] === "active") : null;
       if (existing) return c.json(existing);
-      const code = ((l.link["extension"] as { url: string; value: string }[] | undefined) ?? []).find((x) => x.url === "bayanihan:link-role")?.value ?? "volunteer-episodic";
-      const role: BixResource = { resourceType: "Role", id: o.newId(), meta: { version: 1 }, person: { reference: me }, organization: org, code: { system: "bayanihan:role", code }, status: "active", period: { start: o.now() } };
+      const code = linkExt.find((x) => x.url === "bayanihan:link-role")?.value ?? "volunteer-episodic";
+      const asked = o.store.search ? (await o.store.search("Role", { person: me, organization: org.reference })).find((r) => r["status"] === "requested") : null;
+      if (approval && asked) return c.json(asked);
+      const role: BixResource = { resourceType: "Role", id: o.newId(), meta: { version: 1 }, person: { reference: me }, organization: org, code: { system: "bayanihan:role", code }, status: approval ? "requested" : "active", period: { start: o.now() } };
       const rr = applyChange(null, role, { actor: { type: "rule", rule: "join-through-link" }, permissions: [], now: o.now(), newId: o.newId });
       if (!rr.ok) return c.json({ error: rr.reasons }, 409);
       await o.store.commit(rr.record, rr.provenance);
@@ -410,10 +460,11 @@ export function createApp(o: ServerOptions) {
     const org = team["organization"] as { reference: string };
     if (o.store.search && !(await o.store.search("Role", { person: me, organization: org.reference })).some((r) => r["status"] === "active")) {
       const role: BixResource = { resourceType: "Role", id: o.newId(), meta: { version: 1 }, person: { reference: me }, organization: org,
-        code: { system: "bayanihan:role", code: "volunteer-episodic" }, status: "active", period: { start: o.now() } };
+        code: { system: "bayanihan:role", code: "volunteer-episodic" }, status: approval ? "requested" : "active", period: { start: o.now() } };
       const rr = applyChange(null, role, rule); if (rr.ok) await o.store.commit(rr.record, rr.provenance);
     }
-    const next: BixResource = { ...team, meta: { ...team.meta, version: team.meta.version + 1 }, participant: [...parts, { person: { reference: me }, role: "volunteer", status: "active" }] };
+    if (parts.some((p) => p.person.reference === me && p.status === "requested")) return c.json(team);
+    const next: BixResource = { ...team, meta: { ...team.meta, version: team.meta.version + 1 }, participant: [...parts, { person: { reference: me }, role: "volunteer", status: approval ? "requested" : "active" }] };
     const r = applyChange(team, next, rule);
     if (!r.ok) return c.json({ error: r.reasons }, 409);
     await o.store.commit(r.record, r.provenance);
