@@ -110,6 +110,8 @@ export function createApp(o: ServerOptions) {
     const vs = [ownVisibility(org), record.resourceType === "Organization" ? null : ownVisibility(ini)].filter(Boolean) as Visibility[];
     return vs.length ? vs.reduce((a, b) => (RANK[a] <= RANK[b] ? a : b)) : "public";
   }
+  /** Listing needs an explicit choice: only groups and projects whose coordinators chose "Anyone can find it". */
+  const chosePublic = (r: BixResource | null | undefined) => ((r?.["extension"] as { url: string; value: string }[] | undefined) ?? []).some((x) => x.url === "bayanihan:visibility" && x.value === "public");
   /** Changes that would show private work to outsiders are refused, whoever makes them. */
   async function privacyWhy(r: BixResource): Promise<string | null> {
     if (r.resourceType === "Task" && r["audience"] === "open" && (await visibilityFor(r)) !== "public")
@@ -708,7 +710,7 @@ export function createApp(o: ServerOptions) {
     const place = (c.req.query("place") ?? "").trim().toLowerCase();
     const out: { score: number; r: BixResource }[] = [];
     for (const org of await o.store.search("Organization", {})) {
-      if ((await visibilityFor(org)) !== "public") continue;
+      if (!chosePublic(org) || (await visibilityFor(org)) !== "public") continue;
       let score = alike(name, String(org["name"] ?? ""));
       const theirPlace = String(((org["extension"] as { url: string; value: string }[] | undefined) ?? []).find((x) => x.url === "bayanihan:place-text")?.value ?? "").toLowerCase();
       if (place && theirPlace && (theirPlace.includes(place) || place.includes(theirPlace))) score += 0.15;
@@ -730,14 +732,14 @@ export function createApp(o: ServerOptions) {
     const groups: BixResource[] = [];
     const orgs = new Map<string, BixResource>();
     for (const org of await o.store.search("Organization", {})) {
-      if ((await visibilityFor(org)) !== "public") continue;
+      if (!chosePublic(org) || (await visibilityFor(org)) !== "public") continue;
       orgs.set(`Organization/${org.id}`, org);
       if (has(org) && (!q || alike(q, String(org["name"])) > 0 || String(org["name"]).toLowerCase().includes(q.toLowerCase())) && (!place || placeOf(org).toLowerCase().includes(place))) groups.push(summary(org));
     }
     const projects: BixResource[] = [];
     for (const ini of await o.store.search("Initiative", {})) {
       const org = orgs.get((ini["organization"] as { reference?: string } | undefined)?.reference ?? "");
-      if (!org || ini["status"] === "cancelled" || (await visibilityFor(ini)) !== "public") continue;
+      if (!org || ini["status"] === "cancelled" || !chosePublic(ini) || (await visibilityFor(ini)) !== "public") continue;
       const causeOk = !cause || has(ini) || has(org);
       if (causeOk && (!q || String(ini["title"]).toLowerCase().includes(q.toLowerCase()) || String(org["name"]).toLowerCase().includes(q.toLowerCase())) && (!place || placeOf(org).toLowerCase().includes(place)))
         projects.push({ ...summary(ini), ["groupName"]: org["name"] } as BixResource);
@@ -750,7 +752,7 @@ export function createApp(o: ServerOptions) {
     const me = (await o.identify(c.req.raw)).person;
     if (!me) return c.json({ error: "join the Dasig Ecosystem first" }, 401);
     const org = await o.store.get("Organization", c.req.param("id"));
-    if (!org || (await visibilityFor(org)) !== "public") return c.json({ error: "not found" }, 404);
+    if (!org || !chosePublic(org) || (await visibilityFor(org)) !== "public") return c.json({ error: "not found" }, 404);
     const mine = o.store.search ? (await o.store.search("Role", { person: me, organization: `Organization/${org.id}` })).find((r) => r["status"] === "active" || r["status"] === "requested") : null;
     if (mine) return c.json(mine);
     const role: BixResource = { resourceType: "Role", id: o.newId(), meta: { version: 1 }, person: { reference: me }, organization: { reference: `Organization/${org.id}` },
