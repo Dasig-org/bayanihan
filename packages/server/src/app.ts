@@ -600,6 +600,69 @@ export function createApp(o: ServerOptions) {
    * What the caller may do with one record, so an app shows only the controls the server will accept.
    * `edit` covers details, files and cancelling (BIX never deletes: a cancelled record keeps its history).
    */
+  /**
+   * Groups that may be the same as one about to be created: "Is this your group? Ask to join instead."
+   * Only groups that chose to be found are ever suggested, so a private group's existence is never revealed.
+   */
+  app.get("/$similar", async (c) => {
+    const name = (c.req.query("name") ?? "").trim();
+    if (!name || !o.store.search) return c.json({ entry: [] });
+    const place = (c.req.query("place") ?? "").trim().toLowerCase();
+    const out: { score: number; r: BixResource }[] = [];
+    for (const org of await o.store.search("Organization", {})) {
+      if ((await visibilityFor(org)) !== "public") continue;
+      let score = alike(name, String(org["name"] ?? ""));
+      const theirPlace = String(((org["extension"] as { url: string; value: string }[] | undefined) ?? []).find((x) => x.url === "bayanihan:place-text")?.value ?? "").toLowerCase();
+      if (place && theirPlace && (theirPlace.includes(place) || place.includes(theirPlace))) score += 0.15;
+      if (score >= 0.5) out.push({ score, r: summary(org) });
+    }
+    out.sort((a, b) => b.score - a.score);
+    return c.json({ entry: out.slice(0, 5).map((x) => ({ resource: x.r, score: Math.round(Math.min(1, x.score) * 100) / 100 })) });
+  });
+
+  /**
+   * The public directory: summaries of groups and projects that chose to be found. Filters: cause (a bayanihan:cause
+   * code), q (words in the name or title), place (words in the place). Never people, tasks or files.
+   */
+  app.get("/$directory", async (c) => {
+    if (!o.store.search) return c.json({ entry: [] });
+    const cause = c.req.query("cause"), q = (c.req.query("q") ?? "").trim(), place = (c.req.query("place") ?? "").trim().toLowerCase();
+    const has = (r: BixResource) => !cause || ((r["cause"] as { code: string }[] | undefined) ?? []).some((x) => x.code === cause);
+    const placeOf = (r: BixResource) => String(((r["extension"] as { url: string; value: string }[] | undefined) ?? []).find((x) => x.url === "bayanihan:place-text")?.value ?? "");
+    const groups: BixResource[] = [];
+    const orgs = new Map<string, BixResource>();
+    for (const org of await o.store.search("Organization", {})) {
+      if ((await visibilityFor(org)) !== "public") continue;
+      orgs.set(`Organization/${org.id}`, org);
+      if (has(org) && (!q || alike(q, String(org["name"])) > 0 || String(org["name"]).toLowerCase().includes(q.toLowerCase())) && (!place || placeOf(org).toLowerCase().includes(place))) groups.push(summary(org));
+    }
+    const projects: BixResource[] = [];
+    for (const ini of await o.store.search("Initiative", {})) {
+      const org = orgs.get((ini["organization"] as { reference?: string } | undefined)?.reference ?? "");
+      if (!org || ini["status"] === "cancelled" || (await visibilityFor(ini)) !== "public") continue;
+      const causeOk = !cause || has(ini) || has(org);
+      if (causeOk && (!q || String(ini["title"]).toLowerCase().includes(q.toLowerCase()) || String(org["name"]).toLowerCase().includes(q.toLowerCase())) && (!place || placeOf(org).toLowerCase().includes(place)))
+        projects.push({ ...summary(ini), ["groupName"]: org["name"] } as BixResource);
+    }
+    return c.json({ groups: groups.slice(0, 100), projects: projects.slice(0, 100) });
+  });
+
+  /** Ask to join a group you found: a requested Role its officers accept or decline. */
+  app.post("/Organization/:id/$ask", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    if (!me) return c.json({ error: "join the Dasig Ecosystem first" }, 401);
+    const org = await o.store.get("Organization", c.req.param("id"));
+    if (!org || (await visibilityFor(org)) !== "public") return c.json({ error: "not found" }, 404);
+    const mine = o.store.search ? (await o.store.search("Role", { person: me, organization: `Organization/${org.id}` })).find((r) => r["status"] === "active" || r["status"] === "requested") : null;
+    if (mine) return c.json(mine);
+    const role: BixResource = { resourceType: "Role", id: o.newId(), meta: { version: 1 }, person: { reference: me }, organization: { reference: `Organization/${org.id}` },
+      code: { system: "bayanihan:role", code: "volunteer-episodic" }, status: "requested", period: { start: o.now() } };
+    const r = applyChange(null, role, { actor: { type: "person", person: { reference: me } }, permissions: [], now: o.now(), newId: o.newId });
+    if (!r.ok) return c.json({ error: r.reasons }, 409);
+    await o.store.commit(r.record, r.provenance);
+    return c.json(r.record, 201);
+  });
+
   app.get("/:type/:id/$can", async (c) => {
     const { type, id } = c.req.param();
     if (!resourceTypes.includes(type)) return c.json({ error: `unknown type ${type}` }, 404);
@@ -675,5 +738,20 @@ export function createApp(o: ServerOptions) {
 /** The public summary of a project or group (spec: "Publish as you are"). */
 function summary(r: BixResource): BixResource {
   const keep = ["resourceType", "id", "meta", "title", "name", "kind", "status", "period", "location", "cause", "servesGroup", "organization", "image", "description"];
-  return Object.fromEntries(Object.entries(r).filter(([k]) => keep.includes(k))) as BixResource;
+  const place = ((r["extension"] as { url: string }[] | undefined) ?? []).filter((x) => x.url === "bayanihan:place-text");
+  return { ...Object.fromEntries(Object.entries(r).filter(([k]) => keep.includes(k))), ...(place.length ? { extension: place } : {}) } as BixResource;
+}
+
+/** Words that say little about which group it is, so "Rotaract Club of Lahug" and "Lahug Rotaract" match. */
+const FILLER = new Set(["the", "of", "and", "a", "an", "inc", "incorporated", "org", "organization", "group", "club", "chapter", "community", "ng", "sa", "mga", "philippines", "ph"]);
+export const words = (s: string) => new Set(s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 1 && !FILLER.has(w)));
+/** How alike two group names are, 0 to 1: shared distinctive words over all distinctive words, or 1 when one contains the other. */
+export function alike(a: string, b: string): number {
+  const A = words(a), B = words(b);
+  if (!A.size || !B.size) return a.trim().toLowerCase() === b.trim().toLowerCase() ? 1 : 0;
+  const shared = [...A].filter((w) => B.has(w)).length;
+  const jaccard = shared / new Set([...A, ...B]).size;
+  // "Lahug Rotaract" inside "Rotaract Club of Lahug Uplands": every distinctive word of the shorter name appears in the longer.
+  const contained = shared === Math.min(A.size, B.size) && shared >= 2;
+  return contained ? Math.max(jaccard, 0.8) : jaccard;
 }
