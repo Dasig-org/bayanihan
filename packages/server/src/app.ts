@@ -630,6 +630,45 @@ export function createApp(o: ServerOptions) {
     return c.json({ person, token, linked: true }, 200);
   });
 
+  /**
+   * Copy a group from a phone or hub onto this server: the bundle from that server's Organization/$export.
+   * Only the group's officer can do it, as themselves. Records that already exist here are kept as they are (the copy
+   * is one-way and once; after it, the group works here), so nothing on this server is overwritten.
+   */
+  const IMPORT_ORDER = ["Organization", "Position", "Person", "Role", "Initiative", "InitiativeTemplate", "Team", "Goal", "Task", "Need", "Offer", "Decision", "Vote", "Report"];
+  app.post("/$import", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    if (!me) return c.json({ error: "join the Dasig Ecosystem first" }, 401);
+    const body = (await c.req.json().catch(() => ({}))) as { entry?: { resource: BixResource }[] };
+    const rs = (body.entry ?? []).map((e) => e.resource).filter((r) => r && IMPORT_ORDER.includes(r.resourceType));
+    const orgs = rs.filter((r) => r.resourceType === "Organization");
+    if (orgs.length !== 1) return c.json({ error: "send one group's export" }, 400);
+    const org = orgs[0]!;
+    const orgRef = `Organization/${org.id}`;
+    const officer = rs.some((r) => r.resourceType === "Role" && (r["person"] as { reference?: string })?.reference === me && (r["organization"] as { reference?: string })?.reference === orgRef
+      && r["status"] === "active" && (r["code"] as { code?: string })?.code === "officer");
+    if (!officer) return c.json({ error: "only the group's officer can copy it, from their own phone" }, 403);
+    const here = await o.store.get("Organization", org.id);
+    if (here && !permissionsForRecord(me, here, await loadDirectory(o.store, me, here)).includes("org.manage")) return c.json({ error: "this group is already here, and you aren't its officer here" }, 403);
+    // Everything must belong to this group: no slipping in records for someone else's.
+    const ids = new Set(rs.map((r) => `${r.resourceType}/${r.id}`));
+    const belongs = (r: BixResource) => r.resourceType === "Person" || r.resourceType === "Organization" || [r["organization"], r["initiative"], r["partOf"], r["team"], r["owner"]].some((x) => {
+      const ref = (x as { reference?: string } | undefined)?.reference; return ref === orgRef || (ref ? ids.has(ref) : false);
+    });
+    const counts = { added: 0, kept: 0, refused: 0 }, refused: string[] = [];
+    rs.sort((a, b) => IMPORT_ORDER.indexOf(a.resourceType) - IMPORT_ORDER.indexOf(b.resourceType));
+    for (const r of rs) {
+      if (!belongs(r) || (r.resourceType === "Person" && r.id === me.split("/")[1])) { if (!belongs(r)) { counts.refused++; refused.push(`${r.resourceType}/${r.id}`); } continue; }
+      if (await o.store.get(r.resourceType, r.id)) { counts.kept++; continue; }
+      const copy = { ...r, meta: { version: 1 } } as BixResource;
+      const res = applyChange(null, copy, { actor: { type: "rule", rule: "copied-from-hub" }, permissions: [], now: o.now(), newId: o.newId });
+      if (!res.ok) { counts.refused++; refused.push(`${r.resourceType}/${r.id}: ${res.reasons[0]}`); continue; }
+      await o.store.commit(res.record, await seal(null, res.record, res.provenance));
+      counts.added++;
+    }
+    return c.json({ ...counts, refusedDetail: refused.slice(0, 20), organization: orgRef });
+  });
+
   app.post("/$pair", async (c) => {
     if (!o.devices || !o.pairingCode) return c.json({ error: "this server is not a hub" }, 501);
     const body = (await c.req.json()) as { code?: string; nickname?: string; person?: BixResource; proof?: string };

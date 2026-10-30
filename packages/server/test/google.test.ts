@@ -20,7 +20,7 @@ async function phone() {
   const person = { resourceType: "Person", id: crypto.randomUUID(), meta: { version: 1 }, name: { text: "Don", use: "nickname" }, publicKey: [{ kid: keyIdFor(k.publicKey), alg: "Ed25519", key: k.publicKey, status: "active" }] };
   return { k, person };
 }
-const proof = async (call: (p: string) => Promise<Response>, ph: { k: { privateKey: string }; person: { id: string } }) => {
+const proof = async (call: (p: string) => Response | Promise<Response>, ph: { k: { privateKey: string }; person: { id: string } }) => {
   const { challenge } = await (await call("/$challenge")).json();
   return { challenge, proof: signChallenge(challenge, `Person/${ph.person.id}`, AUD, ph.k.privateKey) };
 };
