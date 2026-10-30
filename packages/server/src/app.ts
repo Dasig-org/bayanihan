@@ -72,8 +72,9 @@ export function createApp(o: ServerOptions) {
 
   /** People in the same group see each other's name and photo (never contact details). */
   async function sharesGroup(a: string, b: string) {
-    const orgs = async (p: string) => new Set((await o.store.search!("Role", { person: p })).filter((r) => r["status"] === "active").map((r) => (r["organization"] as { reference: string }).reference));
-    const [x, y] = await Promise.all([orgs(a), orgs(b)]);
+    // Someone who asked to join a group (a requested Role) is visible to that group, so its officers know who's asking.
+    const orgs = async (p: string, asking = false) => new Set((await o.store.search!("Role", { person: p })).filter((r) => r["status"] === "active" || (asking && r["status"] === "requested")).map((r) => (r["organization"] as { reference: string }).reference));
+    const [x, y] = await Promise.all([orgs(a), orgs(b, true)]);
     return [...x].some((g) => y.has(g));
   }
   const personCard = (p: BixResource): BixResource => {
