@@ -1,0 +1,9 @@
+# Litestream: continuous backup of Bayanihan Server's SQLite database.
+# Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. For MinIO or R2, also set LITESTREAM_ENDPOINT.
+dbs:
+  - path: ${BIX_DB}
+    replica:
+      url: ${LITESTREAM_REPLICA_URL}
+      region: ${LITESTREAM_REGION}
+      endpoint: ${LITESTREAM_ENDPOINT}
+      force-path-style: ${LITESTREAM_PATH_STYLE}

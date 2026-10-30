@@ -1,0 +1,42 @@
+{
+  "name": "@bayanihan/core",
+  "version": "0.1.0",
+  "description": "Bayanihan Core: the engine that enforces BIX. Validation, lifecycles, commit rules, provenance, signatures and report figures, shared by apps and servers.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bayanihan/bix": "file:../../../bix",
+    "@noble/ed25519": "^2.3.0",
+    "@noble/hashes": "^1.8.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "canonicalize": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  },
+  "author": "Dasig Inc. <hello@dasig.org>",
+  "homepage": "https://github.com/Dasig-org/bayanihan#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dasig-org/bayanihan.git",
+    "directory": "packages/core"
+  },
+  "bugs": "https://github.com/Dasig-org/bayanihan/issues",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ]
+}

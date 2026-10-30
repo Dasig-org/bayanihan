@@ -1,0 +1,44 @@
+{
+  "name": "@bayanihan/server",
+  "version": "0.1.0",
+  "description": "Bayanihan Server: the reference BIX server. Stores BIX records, answers the standard BIX API, and runs Bayanihan Core on every change.",
+  "type": "module",
+  "main": "src/index.ts",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/main.ts",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@bayanihan/core": "^0.1.0",
+    "@hono/node-server": "^1.13.0",
+    "@noble/hashes": "^1.8.0",
+    "hono": "^4.6.0",
+    "jose": "^6.2.13",
+    "postgres": "^3.4.4",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  },
+  "author": "Dasig Inc. <hello@dasig.org>",
+  "homepage": "https://github.com/Dasig-org/bayanihan#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dasig-org/bayanihan.git",
+    "directory": "packages/server"
+  },
+  "bugs": "https://github.com/Dasig-org/bayanihan/issues",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ]
+}

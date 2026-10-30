@@ -1,0 +1,82 @@
+import { describe, expect, it } from "vitest";
+import type { BixResource } from "@bayanihan/core";
+import { createApp, sqliteStore, hashToken } from "../src/index.js";
+import { nodeDb } from "./node-db.js";
+
+async function hub() {
+  const s = await sqliteStore(nodeDb());
+  let code: string | null = "PAIR-1234";
+  const app = createApp({
+    store: s.store, keys: s.keys, sequences: s.sequences, linkTokens: s.linkTokens, devices: s.devices, pairingCode: () => code,
+    async identify(req) {
+      const h = req.headers.get("authorization");
+      return { person: h?.startsWith("Bearer ") ? await s.devices.personFor(await hashToken(h.slice(7))) : null };
+    },
+    now: () => new Date().toISOString(), newId: () => crypto.randomUUID(),
+  });
+  const call = (path: string, token: string | null, body?: unknown) =>
+    app.request(path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  return { s, call, setCode: (c: string | null) => { code = c; } };
+}
+const commit = (call: Awaited<ReturnType<typeof hub>>["call"], token: string, ...rs: BixResource[]) => call("/", token, { type: "transaction", entry: rs.map((resource) => ({ resource })) });
+
+describe("a phone hub on SQLite", () => {
+  it("pairs phones by code, and runs the whole loop: group, team, task, invite, claim, done, signed", async () => {
+    const { call, setCode } = await hub();
+    const ana = await (await call("/$pair", null, { code: "PAIR-1234", nickname: "Ana" })).json();
+    expect(ana.token).toBeTruthy();
+    expect((await call("/$pair", null, { code: "WRONG", nickname: "X" })).status).toBe(403);
+
+    const org = { resourceType: "Organization", id: crypto.randomUUID(), meta: { version: 1 }, name: "Rotaract Lahug Uplands", kind: "civic-club" };
+    const ini = { resourceType: "Initiative", id: crypto.randomUUID(), meta: { version: 1 }, title: "Coastal cleanup 2027", kind: "project", status: "active", organization: { reference: `Organization/${org.id}` }, identifier: [{ system: "bayanihan:ref-prefix", value: "CC" }] };
+    expect((await commit(call, ana.token, org)).status).toBe(200);
+    const team = { resourceType: "Team", id: crypto.randomUUID(), meta: { version: 1 }, name: "Marshals", organization: { reference: `Organization/${org.id}` }, initiative: { reference: `Initiative/${ini.id}` }, participant: [{ person: { reference: `Person/${ana.person.id}` }, role: "lead", status: "active" }] };
+    expect((await commit(call, ana.token, ini, team)).status).toBe(200);
+    const task = { resourceType: "Task", id: crypto.randomUUID(), meta: { version: 1 }, intent: "plan", status: "ready", title: "Marshal, km 3", owner: { reference: `Team/${team.id}` }, team: { reference: `Team/${team.id}` }, partOf: { reference: `Initiative/${ini.id}` }, audience: "team" };
+    const made = await (await commit(call, ana.token, task)).json();
+    expect(made.entry[0].record.identifier[0].value).toBe("CC-1");
+
+    const link = await (await call("/$links", ana.token, { target: { reference: `Team/${team.id}` }, grants: ["view", "join-team"] })).json();
+    setCode(null); // the hub stops pairing new phones; Liza is already nearby and pairs before that in real life
+    setCode("PAIR-1234");
+    const liza = await (await call("/$pair", null, { code: "PAIR-1234", nickname: "Liza" })).json();
+    expect((await call(`/$link/${link.token}/join`, liza.token, {})).status).toBe(200);
+
+    const me = { reference: `Person/${liza.person.id}` };
+    const claimed = { ...made.entry[0].record, meta: { version: 2 }, status: "accepted", owner: me, participant: [{ person: me, role: "owner", status: "active" }], executionPeriod: { start: new Date().toISOString() } };
+    expect((await commit(call, liza.token, claimed)).status).toBe(200);
+    const done = { ...claimed, meta: { version: 3 }, status: "completed", executionPeriod: { ...claimed.executionPeriod, end: new Date().toISOString() } };
+    expect((await commit(call, liza.token, done)).status).toBe(200);
+    const check = await (await call(`/Task/${task.id}/$verify`, liza.token)).json();
+    expect(check.allValid).toBe(true);
+    expect(check.signatures[0].signedBy).toBe(`Organization/${org.id}`);
+
+    const story = await (await call(`/Person/${liza.person.id}/$export`, liza.token)).json();
+    expect(story.entry.some((e: { resource: BixResource }) => e.resource.id === task.id)).toBe(true);
+
+    // A person's own key: Liza adds hers; Ana, an officer, can't replace it.
+    const { generatePersonKey, keyIdFor } = await import("@bayanihan/core");
+    const k = await generatePersonKey();
+    const lizaP = await (await call(`/Person/${liza.person.id}`, liza.token)).json();
+    const keyed = { ...lizaP, meta: { version: lizaP.meta.version + 1 }, publicKey: [{ kid: keyIdFor(k.publicKey), alg: "Ed25519", key: k.publicKey, status: "active" }] };
+    expect((await commit(call, liza.token, keyed)).status).toBe(200);
+    const k2 = await generatePersonKey();
+    const hijack = { ...keyed, meta: { version: keyed.meta.version + 1 }, publicKey: [{ kid: keyIdFor(k2.publicKey), alg: "Ed25519", key: k2.publicKey, status: "active" }] };
+    const refused = await commit(call, ana.token, hijack);
+    expect(refused.status).toBe(409);
+    expect(JSON.stringify(await refused.json())).toContain("only the person can change their own keys");
+
+    // Pairing as a Person who has a key needs proof: someone who only knows Liza's id can't pair as her.
+    const { signChallenge } = await import("@bayanihan/core");
+    expect((await call("/$pair", null, { code: "PAIR-1234", person: keyed })).status).toBe(403);
+    const proof = signChallenge("PAIR-1234", `Person/${liza.person.id}`, "bix-pair", k.privateKey);
+    expect((await call("/$pair", null, { code: "PAIR-1234", person: keyed, proof })).status).toBe(201);
+
+    // Who may change the project: Ana (officer) yes; Liza (a team volunteer) can see it but not change it.
+    const can = async (token: string) => (await (await call(`/Initiative/${ini.id}/$can`, token)).json()) as { edit?: boolean };
+    expect((await can(ana.token)).edit).toBe(true);
+    expect((await can(liza.token)).edit).not.toBe(true);
+    expect((await commit(call, liza.token, { ...ini, title: "Mine now", meta: { version: 2 } })).status).toBe(409);
+    expect((await commit(call, ana.token, { ...ini, description: "Every Saturday in March", meta: { version: 2 } })).status).toBe(200);
+  });
+});
