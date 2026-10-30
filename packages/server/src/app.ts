@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, verifyChallenge, countVotes, type Store, type BixResource, type Signature } from "@bayanihan/core";
+import { frontPage } from "./front-page.js";
 import type { KeyStore } from "./keys.js";
 import { prefixFor, withRef, REF_SYSTEM, type Sequences } from "./refs.js";
 import { loadDirectory, permissionsForRecord, type Caller } from "./auth.js";
@@ -181,17 +182,18 @@ export function createApp(o: ServerOptions) {
     return { ...p, signature: [sig] };
   }
 
-  app.get("/", (c) =>
-    c.html(`<!doctype html><meta charset="utf-8"><title>Bayanihan Server</title>
-<body style="font-family:system-ui;max-width:640px;margin:40px auto;color:#0F172A;line-height:1.5">
-<h1>Bayanihan Server</h1><p>The reference BIX server. BIX v0.1 · Bayanihan Server 0.1.0</p>
-<ul>
-<li><a href="/metadata">GET /metadata</a>: what this server supports</li>
-<li>GET /{type}/{id}: read a record, e.g. <code>/Task/&lt;id&gt;</code></li>
-<li>GET /{type}?field=value: search, e.g. <a href="/Task">/Task</a></li>
-<li>GET /{type}/{id}/_history: every version of a record</li>
-<li>POST / with a <code>transaction</code> or <code>sync</code> Bundle: make changes</li>
-</ul></body>`));
+  /**
+   * The front page. A person who types the address in a browser gets a short, branded page; programs use /metadata.
+   * Only public counts appear, and small ones are hidden so a single group can't be picked out.
+   */
+  app.get("/", async (c) => {
+    let groups = 0, projects = 0;
+    try {
+      const d = (await (await app.request("/$directory")).json()) as { groups?: unknown[]; projects?: unknown[] };
+      groups = d.groups?.length ?? 0; projects = d.projects?.length ?? 0;
+    } catch { /* counts are a nicety; the page still loads */ }
+    return c.html(frontPage({ ecosystem: !!o.openJoin, groups, projects }));
+  });
 
   app.get("/metadata", (c) =>
     c.json({ resourceType: "CapabilityStatement", bix: "0.1", software: { name: "Bayanihan Server", version: "0.1.0" }, resourceTypes, interactions: ["read", "search", "history", "transaction", "export"] }));
