@@ -9,7 +9,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "dev": "tsx src/main.ts"
+    "dev": "tsx src/main.ts",
+    "start": "tsx src/main.ts"
   },
   "dependencies": {
     "@bayanihan/core": "*",
@@ -17,11 +18,11 @@
     "@noble/hashes": "^1.8.0",
     "hono": "^4.6.0",
     "jose": "^6.2.13",
-    "postgres": "^3.4.4"
+    "postgres": "^3.4.4",
+    "tsx": "^4.19.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"
   }

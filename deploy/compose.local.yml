@@ -1,0 +1,10 @@
+# Local rehearsal: the same stack, with Litestream backing up to a local volume instead of S3, on http://localhost:8080.
+#   docker compose -f compose.yml -f compose.local.yml --env-file local.env up -d --build
+services:
+  bayanihan:
+    env_file: local.env
+    volumes: [ "backup:/backup" ]
+  caddy:
+    ports: !override [ "8080:80" ]
+    environment: { DOMAIN: ":80" }
+volumes: { backup: {} }

@@ -1,0 +1,17 @@
+# The Dasig Ecosystem server: Bayanihan Server (+ Litestream inside its container) behind Caddy for HTTPS.
+# On the server:  cp env.example .env  (fill it in), then  docker compose up -d --build
+services:
+  bayanihan:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    image: bayanihan/server:0.1
+    env_file: .env
+    volumes: [ "data:/data" ]
+    restart: unless-stopped
+  caddy:
+    image: caddy:2
+    ports: [ "80:80", "443:443" ]
+    environment: { DOMAIN: "${DOMAIN:-localhost}" }
+    volumes: [ "./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config" ]
+    depends_on: [ bayanihan ]
+    restart: unless-stopped
+volumes: { data: {}, caddy_data: {}, caddy_config: {} }

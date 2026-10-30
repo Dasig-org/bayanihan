@@ -1,0 +1,10 @@
+node_modules
+**/node_modules
+.git
+apps
+docs
+supabase
+bayani
+*.log
+.data
+**/.data
