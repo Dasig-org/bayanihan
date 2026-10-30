@@ -14,6 +14,8 @@ import { hashToken } from "./links.js";
  * BIX_OPEN_JOIN=1          Accept sign-ups (GET /$challenge, POST /$join).
  * BIX_CORS_ORIGINS         Comma-separated web origins allowed to call it (the Dasig web app). Default: any.
  * BIX_DEV_HEADERS=1        Local testing only: trust an x-bix-person header. Refused when NODE_ENV=production.
+ * BIX_TOKEN_DAYS=30        Phone tokens stop working after this many days; the app renews them by signing a challenge.
+ * GOOGLE_CLIENT_IDS        Comma-separated Google OAuth client IDs whose ID tokens this server accepts (POST /$google).
  */
 const env = process.env;
 const production = env.NODE_ENV === "production";
@@ -23,6 +25,18 @@ const corsOrigins = env.BIX_CORS_ORIGINS ? env.BIX_CORS_ORIGINS.split(",").map((
 const port = Number(env.PORT ?? 8787);
 const common = { now: () => new Date().toISOString(), newId: randomUUID, ...(corsOrigins ? { corsOrigins } : {}) };
 
+const tokenDays = Number(env.BIX_TOKEN_DAYS ?? 0);
+/** Google ID tokens, checked against Google's published keys (cached by jose), for the given client IDs. */
+async function googleVerifier(audience: string[]) {
+  const { createRemoteJWKSet, jwtVerify } = await import("jose");
+  const jwks = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
+  return async (idToken: string) => {
+    const { payload } = await jwtVerify(idToken, jwks, { issuer: ["https://accounts.google.com", "accounts.google.com"], audience });
+    if (!payload.sub || payload["email_verified"] === false) return null;
+    return { sub: String(payload.sub), ...(payload["email"] ? { email: String(payload["email"]) } : {}) };
+  };
+}
+
 async function options(): Promise<ServerOptions> {
   if (env.BIX_DB) {
     const { sqliteStore } = await import("./sqlite-store.js");
@@ -31,11 +45,12 @@ async function options(): Promise<ServerOptions> {
     const s = await sqliteStore(nodeSqlite(env.BIX_DB));
     return {
       ...common, store: s.store, keys: s.keys, sequences: s.sequences, linkTokens: s.linkTokens, files: s.files, devices: s.devices,
+      ...(env.GOOGLE_CLIENT_IDS ? { google: { identities: s.identities, verify: await googleVerifier(env.GOOGLE_CLIENT_IDS.split(",").map((x) => x.trim()).filter(Boolean)) } } : {}),
       ...(env.BIX_OPEN_JOIN === "1" ? { openJoin: { audience: env.BIX_PUBLIC_URL ?? `http://localhost:${port}`, perHour: Number(env.BIX_JOIN_PER_HOUR ?? 10) } } : {}),
       async identify(req) {
         if (devHeaders && req.headers.get("x-bix-person")) return { person: req.headers.get("x-bix-person") };
         const h = req.headers.get("authorization");
-        return { person: h?.startsWith("Bearer ") ? await s.devices.personFor(await hashToken(h.slice(7))) : null };
+        return { person: h?.startsWith("Bearer ") ? await s.devices.personFor(await hashToken(h.slice(7)), tokenDays ? tokenDays * 86400000 : undefined) : null };
       },
     };
   }

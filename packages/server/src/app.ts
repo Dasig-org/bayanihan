@@ -28,6 +28,11 @@ export type ServerOptions = {
    * address, bound into every proof so a signature made for one server can't be used on another.
    */
   openJoin?: { audience: string; perHour?: number };
+  /**
+   * Google sign-in (POST /$google): a way back in on a new phone. `verify` checks a Google ID token and returns its
+   * stable subject; `identities` links that subject to a Person. The server never sees a password.
+   */
+  google?: { verify(idToken: string): Promise<{ sub: string; email?: string } | null>; identities: { personFor(provider: string, subject: string): Promise<string | null>; link(provider: string, subject: string, person: string): Promise<void> } };
   /** Origins allowed to call this server from a browser (the Dasig web app). Default: any. */
   corsOrigins?: string[];
   /** Turn CORS off on a phone or hub: only native apps call it, and React Native's Response has no body stream for middleware to rewrap. */
@@ -569,6 +574,60 @@ export function createApp(o: ServerOptions) {
     const token = newToken();
     await o.devices.save(await hashToken(token), `Person/${person.id}`);
     return c.json({ person, token }, 201);
+  });
+
+  /**
+   * Sign in with Google. Known Google account: the person comes back, and if the phone sends its own key with a signed
+   * challenge, that key is added to the person (a new or wiped phone). New Google account: linked to the caller if they
+   * are signed in, otherwise to a new Person (brought by the phone, with proof of its key).
+   */
+  app.post("/$google", async (c) => {
+    if (!o.google || !o.devices || !o.openJoin) return c.json({ error: "Google sign-in isn't set up on this server" }, 404);
+    const body = (await c.req.json().catch(() => ({}))) as { idToken?: string; person?: BixResource; challenge?: string; proof?: string };
+    const g = body.idToken ? await o.google.verify(body.idToken).catch(() => null) : null;
+    if (!g) return c.json({ error: "Google didn't confirm that sign-in; try again" }, 401);
+    const now = Date.now();
+    const brought = body.person?.resourceType === "Person" ? body.person : null;
+    const broughtKeys = ((brought?.["publicKey"] as { key: string; status: string; kid: string; alg: string }[] | undefined) ?? []).filter((k) => k.status === "active");
+    const proven = () => {
+      const fresh = body.challenge && challenges.has(body.challenge) && now - challenges.get(body.challenge)! < 5 * 60_000;
+      if (body.challenge) challenges.delete(body.challenge);
+      return !!(fresh && body.proof && brought && broughtKeys.some((k) => verifyChallenge(body.challenge!, `Person/${brought.id}`, o.openJoin!.audience, body.proof!, k.key)));
+    };
+    const keyOk = brought && broughtKeys.length ? proven() : false;
+    let personRef = await o.google.identities.personFor("google", g.sub);
+    const caller = (await o.identify(c.req.raw)).person;
+    if (!personRef) {
+      if (caller) personRef = caller;
+      else {
+        if (brought && broughtKeys.length && !keyOk) return c.json({ error: "this phone can't prove its key" }, 403);
+        const existing = brought ? await o.store.get("Person", brought.id) : null;
+        if (existing) return c.json({ error: "that person is already here; sign in from the phone that has their key" }, 409);
+        const p: BixResource = brought ? { ...brought, meta: { version: 1 } } : { resourceType: "Person", id: o.newId(), meta: { version: 1 }, name: { text: (g.email ?? "Friend").split("@")[0]!.slice(0, 40), use: "nickname" }, credit: "nickname", sharing: "private" };
+        delete (p as Record<string, unknown>)["managedBy"];
+        const r = applyChange(null, p, { actor: { type: "person", person: { reference: `Person/${p.id}` } }, permissions: [], now: o.now(), newId: o.newId });
+        if (!r.ok) return c.json({ error: r.reasons }, 400);
+        await o.store.commit(r.record, r.provenance);
+        personRef = `Person/${p.id}`;
+      }
+      await o.google.identities.link("google", g.sub, personRef);
+    }
+    // Recovery: Google vouches for the person, the phone proves its new key; the key joins the person's record.
+    let person = await o.store.get("Person", personRef.split("/")[1]!);
+    if (!person) return c.json({ error: "not found" }, 404);
+    // A reinstalled phone made a new Person; its proven key moves to the real one (the person Google vouches for).
+    if (keyOk) {
+      const have = ((person["publicKey"] as { key: string }[] | undefined) ?? []);
+      const add = broughtKeys.filter((k) => !have.some((h) => h.key === k.key));
+      if (add.length) {
+        const next = { ...person, meta: { ...person.meta, version: person.meta.version + 1 }, publicKey: [...have, ...add.map((k) => ({ kid: k.kid, alg: k.alg, key: k.key, status: "active", created: o.now() }))] };
+        const r = applyChange(person, next, { actor: { type: "rule", rule: "google-recovery" }, permissions: [], now: o.now(), newId: o.newId });
+        if (r.ok) { await o.store.commit(r.record, r.provenance); person = r.record; }
+      }
+    }
+    const token = newToken();
+    await o.devices.save(await hashToken(token), `Person/${person.id}`);
+    return c.json({ person, token, linked: true }, 200);
   });
 
   app.post("/$pair", async (c) => {

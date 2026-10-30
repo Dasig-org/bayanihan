@@ -24,6 +24,7 @@ create table if not exists bix_link_tokens (token_hash text primary key, link_id
 create table if not exists bix_files (hash text primary key, content_type text not null, size integer not null, uploaded_by text not null, shows_minors integer not null);
 create table if not exists bix_file_bytes (hash text primary key, data text not null);
 create table if not exists bix_devices (token_hash text primary key, person_id text not null, created_at text not null);
+create table if not exists bix_identities (provider text not null, subject text not null, person_id text not null, created_at text not null, primary key (provider, subject));
 `;
 
 /** Bayanihan Server's storage on SQLite: the same behaviour as the Postgres store, for a phone or a hub. */
@@ -111,7 +112,13 @@ export async function sqliteStore(db: Db) {
   /** Phones paired with a hub: a token (only its hash stored) per phone, mapped to its Person. */
   const devices = {
     async save(tokenHash: string, person: string) { await db.run("insert into bix_devices values (?, ?, ?)", tokenHash, person, now()); },
-    async personFor(tokenHash: string) { const r = await db.all<{ person_id: string }>("select person_id from bix_devices where token_hash = ?", tokenHash); return r[0]?.person_id ?? null; },
+    /** A token older than maxAgeMs no longer works (hosted servers renew them with the phone's key; hubs keep them). */
+    async personFor(tokenHash: string, maxAgeMs?: number) {
+      const r = await db.all<{ person_id: string; created_at: string }>("select person_id, created_at from bix_devices where token_hash = ?", tokenHash);
+      if (!r[0]) return null;
+      if (maxAgeMs && Date.now() - Date.parse(r[0].created_at) > maxAgeMs) return null;
+      return r[0].person_id;
+    },
   };
   const b64 = (u: Uint8Array) => { let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
   const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -130,5 +137,10 @@ export async function sqliteStore(db: Db) {
       return meta && r[0] ? { bytes: unb64(r[0].data), meta } : null;
     },
   };
-  return { store, keys, sequences, linkTokens, fileMeta, files, devices };
+  /** Outside sign-ins linked to a Person (e.g. Google), for getting back in on a new phone. */
+  const identities = {
+    async personFor(provider: string, subject: string) { const r = await db.all<{ person_id: string }>("select person_id from bix_identities where provider = ? and subject = ?", provider, subject); return r[0]?.person_id ?? null; },
+    async link(provider: string, subject: string, person: string) { await db.run("insert or replace into bix_identities values (?, ?, ?, ?)", provider, subject, person, now()); },
+  };
+  return { store, keys, sequences, linkTokens, fileMeta, files, devices, identities };
 }
