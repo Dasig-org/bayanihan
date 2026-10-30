@@ -14,11 +14,11 @@ class HistoryStore extends MemoryStore {
   async version(t: string, id: string, v: number) { return this.hist.find((x) => x.resourceType === t && x.id === id && x.meta.version === v) ?? null; }
 }
 
-const ini: BixResource = { resourceType: "Initiative", id: "LU 2027", meta: { version: 1 }, title: "LU 2027", kind: "project", status: "active", organization: R("Organization/cebu-wp") };
-const team: BixResource = { resourceType: "Team", id: "comms", meta: { version: 1 }, name: "Communications", organization: R("Organization/cebu-wp"), initiative: R("Initiative/LU 2027"),
+const ini: BixResource = { resourceType: "Initiative", id: "lahug-run", meta: { version: 1 }, title: "LU 2027", kind: "project", status: "active", organization: R("Organization/lahug-runners") };
+const team: BixResource = { resourceType: "Team", id: "comms", meta: { version: 1 }, name: "Communications", organization: R("Organization/lahug-runners"), initiative: R("Initiative/lahug-run"),
   participant: [{ person: R("Person/mia"), role: "volunteer", status: "active" }] };
 const task: BixResource = { resourceType: "Task", id: "77777777-7777-4777-8777-777777777777", meta: { version: 1 }, intent: "plan", status: "accepted", title: "Speaker form",
-  owner: R("Person/mia"), participant: [{ person: R("Person/mia"), role: "owner", status: "active" }], partOf: R("Initiative/LU 2027") };
+  owner: R("Person/mia"), participant: [{ person: R("Person/mia"), role: "owner", status: "active" }], partOf: R("Initiative/lahug-run") };
 
 describe("signed when done", () => {
   it("signs completed work with the group's key; anyone can check it; tampering shows", async () => {
@@ -30,10 +30,10 @@ describe("signed when done", () => {
     expect(res.status).toBe(200);
 
     const check = await (await app.request(`/Task/${task.id}/$verify`, { headers: { "x-bix-person": "Person/mia" } })).json();
-    expect(check.signatures[0]).toMatchObject({ version: 2, signedBy: "Organization/cebu-wp", unchanged: true });
+    expect(check.signatures[0]).toMatchObject({ version: 2, signedBy: "Organization/lahug-runners", unchanged: true });
     expect(check.allValid).toBe(true);
 
-    const key = await (await app.request("/$keys/Organization/cebu-wp")).json();
+    const key = await (await app.request("/$keys/Organization/lahug-runners")).json();
     expect(key.alg).toBe("Ed25519");
 
     // Someone edits the stored version directly: the check now fails.

@@ -1,6 +1,6 @@
 import * as validators from "@bayanihan/bix/validators";
 
-export const BIX_BASE = "https://bix.bayanihan.dev/v0.1/";
+export const BIX_BASE = "https://bix.dasig.org/v0.1/";
 export type BixResource = { resourceType: string; id: string; meta: { version: number; [k: string]: unknown }; [k: string]: unknown };
 export type ValidationError = { path: string; message: string };
 export type ValidationResult = { valid: boolean; errors: ValidationError[] };

@@ -16,10 +16,10 @@ describe("validate", () => {
   it("accepts a nickname-only Person", () => {
     expect(validate({ resourceType: "Person", id, meta, name: { text: "Mia", use: "nickname" } }).valid).toBe(true);
   });
-  it("accepts a LU 2027 team with a volunteer participant", () => {
+  it("accepts a LU team with a volunteer participant", () => {
     const team = {
       resourceType: "Team", id, meta, name: "Communications",
-      organization: { reference: "Organization/cebu-wp" }, initiative: { reference: "Initiative/LU 2027-2027" },
+      organization: { reference: "Organization/lahug-runners" }, initiative: { reference: "Initiative/lahug-run-2027" },
       kind: "initiative", access: "initiative",
       participant: [
         { person: { reference: "Person/don" }, role: "lead", status: "active" },

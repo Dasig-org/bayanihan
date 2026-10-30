@@ -42,13 +42,13 @@ describe("Bayanihan Server API", () => {
   });
   it("refuses making yourself an officer of someone else's group", async () => {
     const { post } = setup();
-    const role = { resourceType: "Role", id: "99999999-9999-4999-8999-999999999999", meta: { version: 1 }, person: R("Person/intruder"), organization: R("Organization/cebu-wp"), code: { system: "bayanihan:role", code: "officer" }, status: "active" };
+    const role = { resourceType: "Role", id: "99999999-9999-4999-8999-999999999999", meta: { version: 1 }, person: R("Person/intruder"), organization: R("Organization/lahug-runners"), code: { system: "bayanihan:role", code: "officer" }, status: "active" };
     const r = await post("Person/intruder", { type: "transaction", entry: [{ resource: role }] });
     expect(r.status).toBe(409);
   });
   it("lets you ask to join a group", async () => {
     const { post } = setup();
-    const role = { resourceType: "Role", id: "99999999-9999-4999-8999-999999999998", meta: { version: 1 }, person: R("Person/josh"), organization: R("Organization/cebu-wp"), code: { system: "bayanihan:role", code: "volunteer-episodic" }, status: "requested" };
+    const role = { resourceType: "Role", id: "99999999-9999-4999-8999-999999999998", meta: { version: 1 }, person: R("Person/josh"), organization: R("Organization/lahug-runners"), code: { system: "bayanihan:role", code: "volunteer-episodic" }, status: "requested" };
     expect((await post("Person/josh", { type: "transaction", entry: [{ resource: role }] })).status).toBe(200);
   });
   it("makes whoever starts a group its officer", async () => {

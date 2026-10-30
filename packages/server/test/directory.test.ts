@@ -24,14 +24,14 @@ const org = (name: string, v: string, place = "Cebu City", cause = "education") 
 describe("finding groups, and not creating duplicates", () => {
   it("scores names that mean the same group as alike", () => {
     expect(alike("Rotaract Club of Lahug Uplands", "Lahug Uplands Rotaract")).toBeGreaterThanOrEqual(0.8);
-    expect(alike("Lahug Uplands Runners Club", "Lahug Uplands Runners Meetup")).toBeGreaterThanOrEqual(0.5);
+    expect(alike("Lahug Uplands Runners Club", "Lahug Uplands Runners")).toBeGreaterThanOrEqual(0.5);
     expect(alike("Kabataan Tutors", "Lahug Uplands Runners Club")).toBe(0);
   });
   it("suggests public look-alikes but never reveals a private group", async () => {
     const t = await setup(); const ana = await t.join("Ana");
-    const pub = org("Lahug Uplands Runners Club", "public"), hidden = org("Lahug Uplands Runners Meetup", "invited");
+    const pub = org("Lahug Uplands Runners Club", "public"), hidden = org("Lahug Uplands Runners", "invited");
     await t.tx(ana.token, pub); await t.tx(ana.token, hidden);
-    const sim = await (await t.call(`/$similar?name=${encodeURIComponent("Lahug Uplands Runners Meetup")}&place=Cebu`)).json();
+    const sim = await (await t.call(`/$similar?name=${encodeURIComponent("Lahug Uplands Runners")}&place=Cebu`)).json();
     expect(sim.entry.map((e: any) => e.resource.name)).toEqual(["Lahug Uplands Runners Club"]);
     const dir = await (await t.call("/$directory?cause=education")).json();
     expect(dir.groups.map((g: any) => g.name)).toEqual(["Lahug Uplands Runners Club"]);

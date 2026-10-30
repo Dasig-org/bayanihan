@@ -15,7 +15,7 @@ export function pgSequences(sql: import("postgres").Sql): Sequences {
   } };
 }
 
-/** The prefix for a project: its own `bayanihan:ref-prefix` identifier, or initials of its title ("Lahug Uplands Fun Run 2027" → "WP27"). */
+/** The prefix for a project: its own `bayanihan:ref-prefix` identifier, or initials of its title ("Lahug Uplands Fun Run 2027" → "LU27"). */
 export function prefixFor(initiative: BixResource): string {
   const set = ((initiative["identifier"] as { system?: string; value: string }[] | undefined) ?? []).find((i) => i.system === PREFIX_SYSTEM);
   if (set) return set.value.toUpperCase();

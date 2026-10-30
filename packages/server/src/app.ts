@@ -39,7 +39,7 @@ export type ServerOptions = {
   cors?: boolean;
   /** Where files are kept. Without it, uploads are refused. */
   files?: FileStore;
-  /** Counters for short references (LU 2027-24). Without it, records get none. */
+  /** Counters for short references (LU-24). Without it, records get none. */
   sequences?: Sequences;
   /** Group signing keys. Without it, completed work is not signed. */
   keys?: KeyStore;
@@ -492,7 +492,7 @@ export function createApp(o: ServerOptions) {
     return c.json(r.record);
   });
 
-  /** Look up a record by its short reference, e.g. /$ref/LU 2027-24. Same access rules as reading it. */
+  /** Look up a record by its short reference, e.g. /$ref/LU-24. Same access rules as reading it. */
   app.get("/$ref/:ref", async (c) => {
     if (!o.store.search) return c.json({ error: "not found" }, 404);
     const want = c.req.param("ref").toUpperCase();

@@ -14,7 +14,7 @@ describe("signed records", () => {
   it("verifies a record signed by the group, and catches any edit", async () => {
     const { privateKey, publicKey } = await generateGroupKey();
     const rec = done("t1", "2026-11-04T14:00:00+08:00", "2026-11-04T16:30:00+08:00");
-    const sig = await signRecord(rec, privateKey, { reference: "Endpoint/cebu-wp-cloud" }, "k1", "2026-11-04T16:31:00+08:00");
+    const sig = await signRecord(rec, privateKey, { reference: "Endpoint/lahug-runners-cloud" }, "k1", "2026-11-04T16:31:00+08:00");
     expect(await verifyRecord(rec, sig, publicKey)).toBe(true);
     expect(await verifyRecord({ ...rec, executionPeriod: { start: "2026-11-04T09:00:00+08:00", end: "2026-11-04T16:30:00+08:00" } }, sig, publicKey)).toBe(false);
   });

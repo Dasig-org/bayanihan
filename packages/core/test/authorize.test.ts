@@ -4,7 +4,7 @@ import { authorize, permissionsFor, type Directory, type BixResource } from "../
 const m = { version: 1 };
 const R = (r: string) => ({ reference: r });
 const role = (id: string, person: string, org: string, code: string): BixResource => ({ resourceType: "Role", id, meta: m, person: R(person), organization: R(org), code: { system: "bayanihan:role", code }, status: "active" });
-const cebu = "Organization/cebu-wp", rotaract = "Organization/rotaract-lu";
+const cebu = "Organization/lahug-runners", rotaract = "Organization/rotaract-lu";
 const dir: Directory = {
   roles: [
     role("r1", "Person/don", cebu, "officer"),
@@ -13,13 +13,13 @@ const dir: Directory = {
   ],
   positions: [],
   teams: [
-    { resourceType: "Team", id: "comms", meta: m, name: "Communications", organization: R(cebu), initiative: R("Initiative/LU 2027"), access: "initiative",
+    { resourceType: "Team", id: "comms", meta: m, name: "Communications", organization: R(cebu), initiative: R("Initiative/lahug-run"), access: "initiative",
       participant: [{ person: R("Person/don"), role: "lead", status: "active" }, { person: R("Person/mia"), role: "volunteer", status: "active" }] },
-    { resourceType: "Team", id: "design", meta: m, name: "Design", organization: R(cebu), initiative: R("Initiative/LU 2027"), access: "own-tasks", participant: [] },
+    { resourceType: "Team", id: "design", meta: m, name: "Design", organization: R(cebu), initiative: R("Initiative/lahug-run"), access: "own-tasks", participant: [] },
     { resourceType: "Team", id: "marshals", meta: m, name: "Marshals", organization: R(rotaract), initiative: R("Initiative/funrun"), participant: [{ person: R("Person/rhea"), role: "lead", status: "active" }] },
   ],
   initiatives: [
-    { resourceType: "Initiative", id: "LU 2027", meta: m, title: "LU 2027", kind: "project", status: "active", organization: R(cebu) },
+    { resourceType: "Initiative", id: "lahug-run", meta: m, title: "LU 2027", kind: "project", status: "active", organization: R(cebu) },
     { resourceType: "Initiative", id: "funrun", meta: m, title: "Fun run", kind: "project", status: "active", organization: R(rotaract) },
     { resourceType: "Initiative", id: "dons-blog", meta: m, title: "Don's civic tech notes", kind: "project", status: "active", person: R("Person/don"), sharing: "private" },
   ],
