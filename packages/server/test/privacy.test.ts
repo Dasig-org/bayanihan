@@ -55,6 +55,16 @@ describe("privacy a coordinator controls", () => {
     expect(r.status).toBe(409);
     expect(JSON.stringify(await r.json())).toContain("isn't public");
     expect((await g.tx(g.ana.token, { ...task, audience: "team" })).status).toBe(200);
+    // A group that turns private later: work that was open is no longer shown to outsiders.
+    const pub = await group("public");
+    const openTask = { resourceType: "Task", id: id(), meta: { version: 1 }, intent: "plan", status: "ready", title: "Usher", owner: R(`Team/${pub.team.id}`), team: R(`Team/${pub.team.id}`), partOf: R(`Initiative/${pub.ini.id}`), audience: "open", sharing: "public" };
+    const pubIni = { ...pub.ini, meta: { version: 2 }, publicSummary: true, extension: vis("public") };
+    expect((await pub.tx(pub.ana.token, pubIni)).status).toBe(200);
+    expect((await pub.tx(pub.ana.token, openTask)).status).toBe(200);
+    const outsider = await pub.join("Outsider");
+    expect((await pub.call(`/Task/${openTask.id}`, outsider.token)).status).toBe(200);
+    expect((await pub.tx(pub.ana.token, { ...pub.org, meta: { version: 2 }, publicSummary: false, extension: vis("invited") })).status).toBe(200);
+    expect((await pub.call(`/Task/${openTask.id}`, outsider.token)).status).toBe(404);
     const louder = { ...g.ini, meta: { version: 2 }, publicSummary: true, extension: vis("public") };
     expect(JSON.stringify(await (await g.tx(g.ana.token, louder)).json())).toContain("can't be more open than its group");
   });

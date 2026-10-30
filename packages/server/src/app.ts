@@ -116,6 +116,18 @@ export function createApp(o: ServerOptions) {
     return null;
   }
 
+  /**
+   * Viewing, with the group's privacy applied: in a group or project that isn't public, "public" sharing and
+   * "anyone can help" no longer open a record to outsiders. Only people with a place in the group see it.
+   */
+  async function canSee(me: string | null, r: BixResource, dir: Awaited<ReturnType<typeof loadDirectory>>): Promise<boolean> {
+    if (!authorize(me, "view", r, dir).allowed) return false;
+    if (r.resourceType === "Person" || r.resourceType === "Provenance" || r.resourceType === "ShareLink") return true;
+    if ((await visibilityFor(r)) === "public") return true;
+    const closed = { ...r, ...(r["sharing"] === "public" ? { sharing: "organization" } : {}), ...(r["audience"] === "open" ? { audience: "team" } : {}) } as BixResource;
+    return authorize(me, "view", closed, dir).allowed;
+  }
+
   /** Whoever starts a group becomes its officer, recorded by rule. */
   async function founderRole(me: string, org: BixResource) {
     const role: BixResource = { resourceType: "Role", id: o.newId(), meta: { version: 1 }, person: { reference: me }, organization: { reference: `Organization/${org.id}` },
@@ -190,7 +202,7 @@ export function createApp(o: ServerOptions) {
     if (!r) return c.json({ error: "not found" }, 404);
     const me = (await o.identify(c.req.raw)).person;
     const dir = await loadDirectory(o.store, me, r);
-    if (authorize(me, "view", r, dir).allowed) return c.json(r);
+    if (await canSee(me, r, dir)) return c.json(r);
     if (authorize(me, "view-summary", r, dir).allowed && (type === "Initiative" || type === "Organization")) return c.json(summary(r));
     if (type === "Person" && me && o.store.search && (await sharesGroup(me, `Person/${id}`))) return c.json(personCard(r));
     return c.json({ error: "not found" }, 404); // never reveal that a private record exists
@@ -205,7 +217,7 @@ export function createApp(o: ServerOptions) {
     const visible: BixResource[] = [];
     for (const r of await o.store.search(type, c.req.query())) {
       const dir = await loadDirectory(o.store, me, r);
-      if (authorize(me, "view", r, dir).allowed) visible.push(r);
+      if (await canSee(me, r, dir)) visible.push(r);
       else if (authorize(me, "view-summary", r, dir).allowed && (type === "Initiative" || type === "Organization")) visible.push(summary(r));
     }
     return c.json(toBundle(visible, "export", o.newId(), o.now()));
@@ -478,7 +490,7 @@ export function createApp(o: ServerOptions) {
     const me = (await o.identify(c.req.raw)).person;
     for (const type of ["Task", "Need", "Offer", "Decision"]) {
       for (const r of await o.store.search(type, { [REF_SYSTEM]: want })) {
-        if (authorize(me, "view", r, await loadDirectory(o.store, me, r)).allowed) return c.json(r);
+        if (await canSee(me, r, await loadDirectory(o.store, me, r))) return c.json(r);
       }
     }
     return c.json({ error: "not found" }, 404);
