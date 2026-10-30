@@ -100,7 +100,8 @@ export function createApp(o: ServerOptions) {
     if (!r) return null;
     const v = ((r["extension"] as { url: string; value: string }[] | undefined) ?? []).find((x) => x.url === "bayanihan:visibility")?.value;
     if (v === "group" || v === "invited" || v === "public") return v;
-    return r["publicSummary"] === false ? "invited" : "public";
+    // Made before this setting existed: treated as invite-only until its coordinator chooses. Never listed by default.
+    return "invited";
   };
   async function visibilityFor(record: BixResource): Promise<Visibility> {
     const dir = await loadDirectory(o.store, null, record);
