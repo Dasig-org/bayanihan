@@ -737,7 +737,8 @@ export function createApp(o: ServerOptions) {
     for (const org of await o.store.search("Organization", {})) {
       if (!chosePublic(org) || (await visibilityFor(org)) !== "public") continue;
       orgs.set(`Organization/${org.id}`, org);
-      if (has(org) && (!q || alike(q, String(org["name"])) > 0 || String(org["name"]).toLowerCase().includes(q.toLowerCase())) && (!place || placeOf(org).toLowerCase().includes(place))) groups.push(summary(org));
+      if (has(org) && (!q || alike(q, String(org["name"])) > 0 || String(org["name"]).toLowerCase().includes(q.toLowerCase())) && (!place || placeOf(org).toLowerCase().includes(place)))
+        groups.push({ ...summary(org), ...(logoHash(org) ? { logo: `/Organization/${org.id}/$logo` } : {}) } as BixResource);
     }
     const projects: BixResource[] = [];
     for (const ini of await o.store.search("Initiative", {})) {
@@ -747,7 +748,28 @@ export function createApp(o: ServerOptions) {
       if (causeOk && (!q || String(ini["title"]).toLowerCase().includes(q.toLowerCase()) || String(org["name"]).toLowerCase().includes(q.toLowerCase())) && (!place || placeOf(org).toLowerCase().includes(place)))
         projects.push({ ...summary(ini), ["groupName"]: org["name"] } as BixResource);
     }
-    return c.json({ groups: groups.slice(0, 100), projects: projects.slice(0, 100) });
+    // Pages of groups, A to Z; each page carries the listed projects of the groups on it.
+    groups.sort((a, b) => String(a["name"]).localeCompare(String(b["name"])));
+    const offset = Math.max(0, Math.floor(Number(c.req.query("offset") ?? 0)) || 0);
+    const count = Math.min(100, Math.max(1, Math.floor(Number(c.req.query("count") ?? 100)) || 100));
+    const page = groups.slice(offset, offset + count);
+    const onPage = new Set(page.map((g) => `Organization/${g.id}`));
+    const paged = c.req.query("offset") !== undefined || c.req.query("count") !== undefined;
+    return c.json({ total: groups.length, offset, groups: page,
+      projects: (paged ? projects.filter((x) => onPage.has((x["organization"] as { reference?: string } | undefined)?.reference ?? "")) : projects).slice(0, 100) });
+  });
+
+  /**
+   * A listed group's logo, for anyone: only for groups that chose "Anyone can find it", only the file the group set as
+   * its logo, and never a photo marked as showing children.
+   */
+  app.get("/Organization/:id/$logo", async (c) => {
+    const org = await o.store.get("Organization", c.req.param("id"));
+    const hash = org ? logoHash(org) : null;
+    if (!org || !hash || !o.files || !chosePublic(org) || (await visibilityFor(org)) !== "public") return c.json({ error: "not found" }, 404);
+    const f = await o.files.get(hash);
+    if (!f || f.meta.showsMinors || !f.meta.contentType.startsWith("image/")) return c.json({ error: "not found" }, 404);
+    return new Response(f.bytes as Uint8Array<ArrayBuffer>, { headers: { "content-type": f.meta.contentType, "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" } });
   });
 
   /** Ask to join a group you found: a requested Role its officers accept or decline. */
@@ -839,6 +861,13 @@ export function createApp(o: ServerOptions) {
 }
 
 /** The public summary of a project or group (spec: "Publish as you are"). */
+/** The file hash of a group's logo, when it is one of this server's files. */
+function logoHash(org: BixResource): string | null {
+  const url = (org["image"] as { url?: string } | undefined)?.url ?? "";
+  const m = /^\/\$files\/([a-f0-9]{16,})$/.exec(url);
+  return m ? m[1]! : null;
+}
+
 function summary(r: BixResource): BixResource {
   const keep = ["resourceType", "id", "meta", "title", "name", "kind", "status", "period", "location", "cause", "servesGroup", "organization", "image", "description"];
   const place = ((r["extension"] as { url: string }[] | undefined) ?? []).filter((x) => x.url === "bayanihan:place-text");
