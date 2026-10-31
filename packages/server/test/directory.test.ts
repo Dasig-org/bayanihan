@@ -16,7 +16,7 @@ async function setup() {
     headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const join = async (n: string) => (await (await call("/$join", undefined, { nickname: n })).json()) as { token: string; person: { id: string } };
   const tx = (t: string, ...rs: object[]) => call("/", t, { type: "transaction", entry: rs.map((resource) => ({ resource })) });
-  return { call, join, tx };
+  return { call, join, tx, app };
 }
 const org = (name: string, v: string, place = "Cebu City", cause = "education") => ({ resourceType: "Organization", id: id(), meta: { version: 1 }, name, kind: "civic-club",
   publicSummary: v === "public", cause: [{ system: "bayanihan:cause", code: cause }], extension: [...vis(v), { url: "bayanihan:place-text", value: place }] });
@@ -52,5 +52,32 @@ describe("finding groups, and not creating duplicates", () => {
     await t.tx(ana.token, ini, secret);
     const dir = await (await t.call("/$directory?place=lahug")).json();
     expect(dir.projects.map((p: any) => [p.title, p.groupName])).toEqual([["Coastal cleanup", "Lahug Uplands Rotaract"]]);
+  });
+  it("pages groups A to Z, with a total", async () => {
+    const t = await setup(); const ana = await t.join("Ana");
+    for (const n of ["Charlie Tutors", "Alpha Runners", "Bravo Cleanup", "Delta Feeding", "Hidden One"]) await t.tx(ana.token, org(n, n.startsWith("Hidden") ? "invited" : "public"));
+    const p1 = await (await t.call("/$directory?offset=0&count=2")).json();
+    expect(p1.total).toBe(4);
+    expect(p1.groups.map((g: any) => g.name)).toEqual(["Alpha Runners", "Bravo Cleanup"]);
+    const p2 = await (await t.call("/$directory?offset=2&count=2")).json();
+    expect(p2.groups.map((g: any) => g.name)).toEqual(["Charlie Tutors", "Delta Feeding"]);
+  });
+  it("serves a listed group's logo to anyone, and never a private group's or a photo of children", async () => {
+    const t = await setup(); const ana = await t.join("Ana");
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const upload = async (bytes: Uint8Array, q = "") => ((await (await t.app.request(`/$files${q}`, { method: "POST", headers: { "content-type": "image/png", authorization: `Bearer ${ana.token}` }, body: bytes as unknown as BodyInit })).json()) as { url: string }).url;
+    const pubUrl = await upload(png); const kidUrl = await upload(new Uint8Array([...png, 1]), "?showsMinors=true");
+    const pub = { ...org("Echo Club", "public"), image: { contentType: "image/png", url: pubUrl } };
+    const hid = { ...org("Foxtrot Club", "invited"), image: { contentType: "image/png", url: pubUrl } };
+    const kid = { ...org("Golf Club", "public"), image: { contentType: "image/png", url: kidUrl } };
+    await t.tx(ana.token, pub); await t.tx(ana.token, hid); await t.tx(ana.token, kid);
+    const dir = await (await t.call("/$directory")).json();
+    const echo = dir.groups.find((g: any) => g.name === "Echo Club");
+    expect(echo.logo).toBe(`/Organization/${pub.id}/$logo`);
+    const res = await t.call(echo.logo);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect((await t.call(`/Organization/${hid.id}/$logo`)).status).toBe(404);
+    expect((await t.call(`/Organization/${kid.id}/$logo`)).status).toBe(404);
   });
 });
