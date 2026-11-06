@@ -17,6 +17,16 @@ export const DEFAULT_PERMISSIONS: Record<string, string[]> = {
   "core-member": ["initiative.plan", "task.assign", "task.confirm"],
 };
 
+/**
+ * Who's who (BIX Role.code). Everyone may be a volunteer in spirit, but organizationally the core team runs the group
+ * and volunteers help with parts of it. Core team: officer, core-member, member. Everyone else (volunteer-regular,
+ * volunteer-episodic, service-learning, partner-representative, donor) is outside the core team.
+ */
+export const CORE_TEAM_ROLES = ["officer", "core-member", "member"] as const;
+/** Roles that see all of the group's work by default. Anyone else can be given `view.organization`. */
+const SEES_ALL_ROLES = ["officer", "core-member"];
+export const isCoreTeam = (code?: string) => (CORE_TEAM_ROLES as readonly string[]).includes(code ?? "");
+
 const refOf = (r: BixResource) => `${r.resourceType}/${r.id}`;
 const ref = (x: unknown) => (x as Ref | undefined)?.reference;
 const active = (r: BixResource) => r["status"] === "active";
@@ -53,7 +63,10 @@ export function permissionsFor(person: string, organization: string | undefined,
     const pos = dir.positions.find((x) => refOf(x) === ref(role["position"]));
     for (const p of (pos?.["permissions"] as { code: string }[] | undefined) ?? []) out.add(p.code);
     out.add("member");
+    if (isCoreTeam(code)) out.add("core-team");
+    if (SEES_ALL_ROLES.includes(code)) out.add("view.organization");
   }
+  if (out.has("org.manage")) out.add("view.organization");
   if (team) {
     const t = dir.teams.find((x) => refOf(x) === team);
     const me = ((t?.["participant"] as { person: Ref; role: string; status: string }[] | undefined) ?? []).find((p) => p.person.reference === person && p.status === "active");
@@ -74,6 +87,29 @@ const isPartnerMember = (person: string, initiative: string | undefined, dir: Di
   const partners = ((ini?.["partner"] as Ref[] | undefined) ?? []).map((p) => p.reference);
   return dir.roles.some((r) => ref(r["person"]) === person && active(r) && partners.includes(ref(r["organization"]) ?? ""));
 };
+
+const onTeam = (t: BixResource | undefined, person: string) =>
+  ((t?.["participant"] as { person: Ref; status: string }[] | undefined) ?? []).some((p) => p.person.reference === person && p.status === "active");
+
+/**
+ * Inside a group, how far a person sees work shared at `organization` (BIX "Seeing other committees' work"):
+ * officers, core members and anyone given `view.organization` see everything; members see every committee in the
+ * projects they're on, unless a committee keeps its work to itself (`Team.visibility: team`); volunteers see their
+ * own committees, work offered to the whole group or to outsiders, and more only through `Team.access: initiative`.
+ * Records that don't belong to a project or committee (the group itself, roles, positions) are seen by every member.
+ */
+function seesWithinGroup(person: string, record: BixResource, owner: ReturnType<typeof owningParty>, perms: Set<string>, dir: Directory): boolean {
+  if (!owner.initiative && !owner.team) return true;
+  if (perms.has("view.organization") || involves(person, record) || onTeamWithInitiativeAccess(person, owner.initiative, dir)) return true;
+  const team = owner.team ? dir.teams.find((t) => refOf(t) === owner.team) : undefined;
+  if (team && onTeam(team, person)) return true;
+  if (record.resourceType === "Task" && ["organization", "open"].includes(String(record["audience"]))) return true;
+  const inProject = !!owner.initiative && dir.teams.some((t) => ref(t["initiative"]) === owner.initiative && onTeam(t, person));
+  if (record.resourceType === "Initiative") return inProject || perms.has("core-team");
+  if (!perms.has("core-team")) return false;
+  if (team?.["visibility"] === "team") return false;
+  return inProject;
+}
 
 const involves = (person: string, record: BixResource) =>
   ref(record["owner"]) === person || ref(record["person"]) === person ||
@@ -110,7 +146,7 @@ export function authorize(person: string | null, action: Action, record: BixReso
   const linkAllows = (g: string) => viaLink && link!.grants.includes(g);
 
   const canView =
-    sharing === "public" || member || linkAllows("view") ||
+    sharing === "public" || (member && (sharing !== "organization" || seesWithinGroup(person!, record, owner, perms, dir))) || linkAllows("view") ||
     (person !== null && (involves(person, record) || onTeamWithInitiativeAccess(person, owner.initiative, dir))) ||
     (sharing === "partners" && person !== null && isPartnerMember(person, owner.initiative, dir)) ||
     (sharing === "network" && person !== null);

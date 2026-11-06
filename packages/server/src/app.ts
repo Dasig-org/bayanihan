@@ -745,7 +745,7 @@ export function createApp(o: ServerOptions) {
       const org = orgs.get((ini["organization"] as { reference?: string } | undefined)?.reference ?? "");
       if (!org || ini["status"] === "cancelled" || !chosePublic(ini) || (await visibilityFor(ini)) !== "public") continue;
       const causeOk = !cause || has(ini) || has(org);
-      if (causeOk && (!q || String(ini["title"]).toLowerCase().includes(q.toLowerCase()) || String(org["name"]).toLowerCase().includes(q.toLowerCase())) && (!place || placeOf(org).toLowerCase().includes(place)))
+      if (causeOk && (!q || String(ini["title"]).toLowerCase().includes(q.toLowerCase()) || String(org["name"]).toLowerCase().includes(q.toLowerCase())) && (!place || `${placeOf(ini)} ${placeOf(org)}`.toLowerCase().includes(place)))
         projects.push({ ...summary(ini), ["groupName"]: org["name"] } as BixResource);
     }
     // Pages of groups, A to Z; each page carries the listed projects of the groups on it.
