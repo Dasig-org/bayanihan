@@ -37,6 +37,29 @@ async function googleVerifier(audience: string[]) {
   };
 }
 
+/**
+ * OIDC providers, from BIX_OIDC_PROVIDERS: "name|issuer|clientId,clientId;name2|…". Keys come from the issuer's
+ * discovery document (jwks_uri), cached by jose. Example: dasig|https://turvwsqyusqixhjhvhhy.supabase.co/auth/v1|<id>,<id>
+ */
+async function oidcProviders(spec: string) {
+  const { createRemoteJWKSet, jwtVerify } = await import("jose");
+  const out: Record<string, { verify(t: string): Promise<{ sub: string; name?: string } | null> }> = {};
+  for (const entry of spec.split(";").map((x) => x.trim()).filter(Boolean)) {
+    const [name, issuer, ids] = entry.split("|");
+    if (!name || !issuer || !ids) throw new Error(`BIX_OIDC_PROVIDERS: "${entry}" needs name|issuer|clientIds`);
+    const meta = (await (await fetch(`${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`)).json()) as { jwks_uri: string };
+    const jwks = createRemoteJWKSet(new URL(meta.jwks_uri));
+    const audience = ids.split(",").map((x) => x.trim()).filter(Boolean);
+    out[name] = { async verify(t) {
+      const { payload } = await jwtVerify(t, jwks, { issuer, audience });
+      if (!payload.sub) return null;
+      const n = payload["name"] ?? payload["given_name"] ?? (payload["user_metadata"] as { full_name?: string } | undefined)?.full_name;
+      return { sub: String(payload.sub), ...(n ? { name: String(n) } : {}) };
+    } };
+  }
+  return out;
+}
+
 async function options(): Promise<ServerOptions> {
   if (env.BIX_DB) {
     const { sqliteStore } = await import("./sqlite-store.js");
@@ -46,6 +69,7 @@ async function options(): Promise<ServerOptions> {
     return {
       ...common, store: s.store, keys: s.keys, sequences: s.sequences, linkTokens: s.linkTokens, files: s.files, devices: s.devices,
       ...(env.GOOGLE_CLIENT_IDS ? { google: { identities: s.identities, verify: await googleVerifier(env.GOOGLE_CLIENT_IDS.split(",").map((x) => x.trim()).filter(Boolean)) } } : {}),
+      ...(env.BIX_OIDC_PROVIDERS ? { oidc: { identities: s.identities, providers: await oidcProviders(env.BIX_OIDC_PROVIDERS) } } : {}),
       ...(env.BIX_OPEN_JOIN === "1" ? { openJoin: { audience: env.BIX_PUBLIC_URL ?? `http://localhost:${port}`, perHour: Number(env.BIX_JOIN_PER_HOUR ?? 10) } } : {}),
       async identify(req) {
         if (devHeaders && req.headers.get("x-bix-person")) return { person: req.headers.get("x-bix-person") };

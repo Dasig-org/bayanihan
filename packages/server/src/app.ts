@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, verifyChallenge, countVotes, type Store, type BixResource, type Signature } from "@bayanihan/core";
 import { frontPage } from "./front-page.js";
@@ -34,6 +34,12 @@ export type ServerOptions = {
    * stable subject; `identities` links that subject to a Person. The server never sees a password.
    */
   google?: { verify(idToken: string): Promise<{ sub: string; email?: string } | null>; identities: { personFor(provider: string, subject: string): Promise<string | null>; link(provider: string, subject: string, person: string): Promise<void> } };
+  /**
+   * OpenID Connect providers this server accepts sign-ins from, by name, e.g. "dasig" (a dasig.org account via
+   * Supabase's OAuth 2.1 server). `verify` checks an ID token issued for this server's client IDs. The server stores
+   * only the link (provider, subject) → Person. Docs: docs/auth/DASIG_ACCOUNTS.md.
+   */
+  oidc?: { providers: Record<string, { verify(idToken: string): Promise<{ sub: string; name?: string } | null> }>; identities: { personFor(provider: string, subject: string): Promise<string | null>; link(provider: string, subject: string, person: string): Promise<void> } };
   /** Origins allowed to call this server from a browser (the Dasig web app). Default: any. */
   corsOrigins?: string[];
   /** Turn CORS off on a phone or hub: only native apps call it, and React Native's Response has no body stream for middleware to rewrap. */
@@ -586,11 +592,13 @@ export function createApp(o: ServerOptions) {
    * challenge, that key is added to the person (a new or wiped phone). New Google account: linked to the caller if they
    * are signed in, otherwise to a new Person (brought by the phone, with proof of its key).
    */
-  app.post("/$google", async (c) => {
-    if (!o.google || !o.devices || !o.openJoin) return c.json({ error: "Google sign-in isn't set up on this server" }, 404);
-    const body = (await c.req.json().catch(() => ({}))) as { idToken?: string; person?: BixResource; challenge?: string; proof?: string };
-    const g = body.idToken ? await o.google.verify(body.idToken).catch(() => null) : null;
-    if (!g) return c.json({ error: "Google didn't confirm that sign-in; try again" }, 401);
+  type Ids = { personFor(provider: string, subject: string): Promise<string | null>; link(provider: string, subject: string, person: string): Promise<void> };
+  type SignInBody = { idToken?: string; person?: BixResource; challenge?: string; proof?: string };
+  /**
+   * Sign in with an outside account (Google, or an OIDC provider such as a Dasig account). A linked account brings its
+   * person back; signed in already, it links to you; a phone that proves its key keeps its person; otherwise a new one.
+   */
+  async function signInWith(c: Context, provider: string, ids: Ids, g: { sub: string; email?: string; name?: string }, body: SignInBody) {
     const now = Date.now();
     const brought = body.person?.resourceType === "Person" ? body.person : null;
     const broughtKeys = ((brought?.["publicKey"] as { key: string; status: string; kid: string; alg: string }[] | undefined) ?? []).filter((k) => k.status === "active");
@@ -600,7 +608,7 @@ export function createApp(o: ServerOptions) {
       return !!(fresh && body.proof && brought && broughtKeys.some((k) => verifyChallenge(body.challenge!, `Person/${brought.id}`, o.openJoin!.audience, body.proof!, k.key)));
     };
     const keyOk = brought && broughtKeys.length ? proven() : false;
-    let personRef = await o.google.identities.personFor("google", g.sub);
+    let personRef = await ids.personFor(provider, g.sub);
     const caller = (await o.identify(c.req.raw)).person;
     if (!personRef) {
       if (caller) personRef = caller;
@@ -608,14 +616,14 @@ export function createApp(o: ServerOptions) {
         if (brought && broughtKeys.length && !keyOk) return c.json({ error: "this phone can't prove its key" }, 403);
         const existing = brought ? await o.store.get("Person", brought.id) : null;
         if (existing) return c.json({ error: "that person is already here; sign in from the phone that has their key" }, 409);
-        const p: BixResource = brought ? { ...brought, meta: { version: 1 } } : { resourceType: "Person", id: o.newId(), meta: { version: 1 }, name: { text: (g.email ?? "Friend").split("@")[0]!.slice(0, 40), use: "nickname" }, credit: "nickname", sharing: "private" };
+        const p: BixResource = brought ? { ...brought, meta: { version: 1 } } : { resourceType: "Person", id: o.newId(), meta: { version: 1 }, name: { text: (g.name ?? (g.email ?? "Friend").split("@")[0]!).slice(0, 40), use: "nickname" }, credit: "nickname", sharing: "private" };
         delete (p as Record<string, unknown>)["managedBy"];
         const r = applyChange(null, p, { actor: { type: "person", person: { reference: `Person/${p.id}` } }, permissions: [], now: o.now(), newId: o.newId });
         if (!r.ok) return c.json({ error: r.reasons }, 400);
         await o.store.commit(r.record, r.provenance);
         personRef = `Person/${p.id}`;
       }
-      await o.google.identities.link("google", g.sub, personRef);
+      await ids.link(provider, g.sub, personRef);
     }
     // Recovery: Google vouches for the person, the phone proves its new key; the key joins the person's record.
     let person = await o.store.get("Person", personRef.split("/")[1]!);
@@ -626,13 +634,31 @@ export function createApp(o: ServerOptions) {
       const add = broughtKeys.filter((k) => !have.some((h) => h.key === k.key));
       if (add.length) {
         const next = { ...person, meta: { ...person.meta, version: person.meta.version + 1 }, publicKey: [...have, ...add.map((k) => ({ kid: k.kid, alg: k.alg, key: k.key, status: "active", created: o.now() }))] };
-        const r = applyChange(person, next, { actor: { type: "rule", rule: "google-recovery" }, permissions: [], now: o.now(), newId: o.newId });
+        const r = applyChange(person, next, { actor: { type: "rule", rule: `${provider}-recovery` }, permissions: [], now: o.now(), newId: o.newId });
         if (r.ok) { await o.store.commit(r.record, r.provenance); person = r.record; }
       }
     }
     const token = newToken();
-    await o.devices.save(await hashToken(token), `Person/${person.id}`);
+    await o.devices!.save(await hashToken(token), `Person/${person.id}`);
     return c.json({ person, token, linked: true }, 200);
+    }
+
+  app.post("/$google", async (c) => {
+    if (!o.google || !o.devices || !o.openJoin) return c.json({ error: "Google sign-in isn't set up on this server" }, 404);
+    const body = (await c.req.json().catch(() => ({}))) as SignInBody;
+    const g = body.idToken ? await o.google.verify(body.idToken).catch(() => null) : null;
+    if (!g) return c.json({ error: "Google didn't confirm that sign-in; try again" }, 401);
+    return signInWith(c, "google", o.google.identities, g, body);
+  });
+
+  /** Sign in with an OpenID Connect provider this server trusts, e.g. `{ provider: "dasig", idToken }`. */
+  app.post("/$oidc", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as SignInBody & { provider?: string };
+    const p = body.provider && o.oidc ? o.oidc.providers[body.provider] : undefined;
+    if (!p || !o.oidc || !o.devices || !o.openJoin) return c.json({ error: "that sign-in isn't set up on this server" }, 404);
+    const g = body.idToken ? await p.verify(body.idToken).catch(() => null) : null;
+    if (!g) return c.json({ error: "that sign-in couldn't be confirmed; try again" }, 401);
+    return signInWith(c, body.provider!, o.oidc.identities, g, body);
   });
 
   /**
