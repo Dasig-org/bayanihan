@@ -112,6 +112,7 @@ export async function sqliteStore(db: Db) {
   /** Phones paired with a hub: a token (only its hash stored) per phone, mapped to its Person. */
   const devices = {
     async save(tokenHash: string, person: string) { await db.run("insert into bix_devices values (?, ?, ?)", tokenHash, person, now()); },
+    async forget(tokenHash: string) { await db.run("delete from bix_devices where token_hash = ?", tokenHash); },
     /** A token older than maxAgeMs no longer works (hosted servers renew them with the phone's key; hubs keep them). */
     async personFor(tokenHash: string, maxAgeMs?: number) {
       const r = await db.all<{ person_id: string; created_at: string }>("select person_id, created_at from bix_devices where token_hash = ?", tokenHash);

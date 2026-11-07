@@ -53,4 +53,13 @@ describe("signing in with a Dasig account", () => {
     expect((await call("/$google", { idToken: "google:same" })).status).toBe(404); // Google isn't configured here
     expect(a.person.id).toBeTruthy();
   });
+  it("signing out ends the session on the server, and the Dasig account still brings the person back", async () => {
+    const call = await hosted();
+    const a = await (await call("/$oidc", { provider: "dasig", idToken: "dasig:u9:Lea" })).json();
+    expect((await call("/$me", {}, a.token)).status).toBe(200);
+    await call("/$signout", {}, a.token);
+    expect((await call("/$me", {}, a.token)).status).not.toBe(200);
+    const b = await (await call("/$oidc", { provider: "dasig", idToken: "dasig:u9" })).json();
+    expect(b.person.id).toBe(a.person.id);
+  });
 });

@@ -20,7 +20,7 @@ export type ServerOptions = {
   /** Secret halves of ShareLinks. Without it, links can't be created. */
   linkTokens?: LinkTokens;
   /** Phones paired with this hub. With it, POST /$pair is available. */
-  devices?: { save(tokenHash: string, person: string): Promise<void>; personFor(tokenHash: string): Promise<string | null> };
+  devices?: { save(tokenHash: string, person: string): Promise<void>; personFor(tokenHash: string): Promise<string | null>; forget?(tokenHash: string): Promise<void> };
   /** The pairing code shown on the hub as a QR. Changing it stops new pairings with the old code. */
   pairingCode?: () => string | null;
   /**
@@ -652,6 +652,13 @@ export function createApp(o: ServerOptions) {
   });
 
   /** Sign in with an OpenID Connect provider this server trusts, e.g. `{ provider: "dasig", idToken }`. */
+  /** Sign out: this device's token stops working on the server, not only in the app. */
+  app.post("/$signout", async (c) => {
+    const h = c.req.header("authorization");
+    if (h?.startsWith("Bearer ") && o.devices?.forget) await o.devices.forget(await hashToken(h.slice(7)));
+    return c.json({ signedOut: true });
+  });
+
   app.post("/$oidc", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as SignInBody & { provider?: string };
     const p = body.provider && o.oidc ? o.oidc.providers[body.provider] : undefined;
