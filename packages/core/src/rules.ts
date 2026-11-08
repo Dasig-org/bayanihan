@@ -73,6 +73,25 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
     if (a && b && !canTransition(next.resourceType, a, b)) reasons.push(`${next.resourceType} cannot go from ${a} to ${b}`);
   } else if (next.meta.version !== 1) reasons.push("a new record starts at version 1");
 
+  // Nothing is orphaned: every record says who it belongs to, and that can't be changed later.
+  // (A group's ownership moves by recorded hand-over of its officers, never by re-pointing its records.)
+  const ref = (r: BixResource | null, k: string) => (r?.[k] as Ref | undefined)?.reference;
+  const OWNERS: Record<string, string[][]> = {
+    Initiative: [["organization"], ["person"]],
+    Team: [["organization"]],
+    Task: [["partOf"], ["team"], ["owner"]],
+    Need: [["initiative"]],
+    Role: [["person", "organization"]],
+    Position: [["organization"]],
+  };
+  const needs = OWNERS[next.resourceType];
+  if (needs && !needs.some((ks) => ks.every((k) => ref(next, k)))) reasons.push(`a ${next.resourceType} must belong to ${needs.map((ks) => ks.join(" and ")).join(" or ")}`);
+  if (prev) for (const k of ["organization", "person", "partOf", "initiative", "team"]) {
+    if (next.resourceType === "Task" && k === "team") continue; // work can move between a project's teams
+    if (next.resourceType === "Person") continue;
+    if (ref(prev, k) && ref(prev, k) !== ref(next, k)) reasons.push(`a ${next.resourceType}'s ${k} can't be changed`);
+  }
+
   // A model only ever proposes (rules 3–4).
   if (ctx.actor.type === "model") {
     if (!isDraft(next)) reasons.push("a model may only create or edit drafts");

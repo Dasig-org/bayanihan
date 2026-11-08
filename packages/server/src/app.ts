@@ -153,7 +153,21 @@ export function createApp(o: ServerOptions) {
   }
 
   /** Changing an existing record: the people on it or its lead; or a claim, or answering an ask, which Core's rules check. */
+  /** A group always keeps at least one officer, so it can't be left without anyone able to run it. */
+  async function lastOfficerWhy(prev: BixResource, next: BixResource): Promise<string | null> {
+    if (prev.resourceType !== "Role" || !o.store.search) return null;
+    const code = (r: BixResource) => (r["code"] as { code?: string } | undefined)?.code;
+    const wasOfficer = prev["status"] === "active" && code(prev) === "officer";
+    const stillOfficer = next["status"] === "active" && code(next) === "officer";
+    if (!wasOfficer || stillOfficer) return null;
+    const org = (prev["organization"] as { reference: string }).reference;
+    const others = (await o.store.search("Role", { organization: org })).filter((r) => r.id !== prev.id && r["status"] === "active" && code(r) === "officer");
+    return others.length ? null : "a group needs at least one officer. Make someone else an officer first";
+  }
+
   async function canUpdate(me: string, prev: BixResource, next: BixResource): Promise<string | null> {
+    const officer = await lastOfficerWhy(prev, next);
+    if (officer) return officer;
     if (prev.resourceType === "Task" && ["accepted", "in-progress", "completed"].includes(String(next["status"])) && prev["status"] !== next["status"] && ["ready", "requested"].includes(String(prev["status"]))) {
       for (const d of (next["dependsOn"] as { reference: string }[] | undefined) ?? []) {
         const [dt, did] = d.reference.split("/");
@@ -520,6 +534,77 @@ export function createApp(o: ServerOptions) {
   });
 
   /** Check a record's signatures: who signed which version, and whether it is unchanged. */
+  /**
+   * A record's history in plain terms: each change, who made it, when, and whether that version is signed and unchanged.
+   * Only for people who may see the record. Names are left to the app (it may already know them, or may not see them).
+   */
+  app.get("/:type/:id/$provenance", async (c) => {
+    const { type, id } = c.req.param();
+    const r = await o.store.get(type, id);
+    if (!r || !o.store.provenanceFor) return c.json({ error: "not found" }, 404);
+    const me = (await o.identify(c.req.raw)).person;
+    if (!authorize(me, "view", r, await loadDirectory(o.store, me, r)).allowed) return c.json({ error: "not found" }, 404);
+    const out = [];
+    for (const p of await o.store.provenanceFor(`${type}/${id}`)) {
+      const v = Number(((p["target"] as { reference: string }[])[0]?.reference.split("/_history/")[1]) ?? 0);
+      const agents = (p["agent"] as { type: string; who?: { reference: string }; model?: string }[] | undefined) ?? [];
+      const sigs = (p["signature"] as Signature[] | undefined) ?? [];
+      let signed: { by: string; unchanged: boolean } | null = null;
+      if (sigs[0] && o.keys && o.store.version) {
+        const rec = await o.store.version(type, id, v); const pub = await o.keys.publicKeyFor(sigs[0].who.reference);
+        signed = { by: sigs[0].who.reference, unchanged: !!rec && !!pub && (await verifyRecord(rec, sigs[0], pub.publicKey)) };
+      }
+      out.push({ version: v, activity: p["activity"], by: agents.find((a) => a.type === "author")?.who?.reference ?? null, model: agents.some((a) => a.type === "model"),
+        rule: agents.some((a) => a.type === "rule"), when: p["occurredAt"] ?? p["recorded"], offline: !!p["offline"], signed });
+    }
+    out.sort((a, b) => a.version - b.version);
+    return c.json({ record: `${type}/${id}`, entry: out });
+  });
+
+  /** Proof of one record, to share: its signed versions with their signed Provenance, as a BIX bundle anyone can check. */
+  app.get("/:type/:id/$proof", async (c) => {
+    const { type, id } = c.req.param();
+    const r = await o.store.get(type, id);
+    if (!r || !o.store.provenanceFor || !o.store.version) return c.json({ error: "not found" }, 404);
+    const me = (await o.identify(c.req.raw)).person;
+    if (!authorize(me, "view", r, await loadDirectory(o.store, me, r)).allowed) return c.json({ error: "not found" }, 404);
+    const recs: BixResource[] = [];
+    for (const p of await o.store.provenanceFor(`${type}/${id}`)) {
+      if (!((p["signature"] as unknown[] | undefined) ?? []).length) continue;
+      const v = Number(((p["target"] as { reference: string }[])[0]!.reference.split("/_history/")[1]));
+      const rec = await o.store.version(type, id, v);
+      if (rec) recs.push(rec, p);
+    }
+    if (!recs.length) return c.json({ error: "this record isn't signed yet" }, 404);
+    return c.json(toBundle(recs, "export", o.newId(), o.now()));
+  });
+
+  /**
+   * Check a proof anyone was given (no sign-in): each signed version in the bundle against the signer's public key
+   * on this server. Returns no content, only the result, and the signer's name only when the group is public.
+   */
+  app.post("/$check", async (c) => {
+    const b = (await c.req.json().catch(() => null)) as { entry?: { resource: BixResource }[] } | null;
+    const all = (b?.entry ?? []).map((e) => e.resource).filter(Boolean);
+    if (!all.length || !o.keys) return c.json({ error: "send a proof bundle from Dasig" }, 400);
+    const checks = [];
+    for (const p of all.filter((x) => x.resourceType === "Provenance")) {
+      const t = (p["target"] as { reference: string }[] | undefined)?.[0]?.reference ?? "";
+      const [rt, rid, , ver] = t.split("/");
+      const rec = all.find((x) => x.resourceType === rt && x.id === rid && x.meta?.version === Number(ver));
+      for (const sig of (p["signature"] as Signature[] | undefined) ?? []) {
+        const pub = await o.keys.publicKeyFor(sig.who.reference);
+        const valid = !!rec && !!pub && (await verifyRecord(rec, sig, pub.publicKey));
+        const [st, sid] = sig.who.reference.split("/");
+        const signer = st && sid ? await o.store.get(st, sid) : null;
+        const name = signer && signer["publicSummary"] !== false && (await visibilityFor(signer)) === "public" ? String(signer["name"] ?? "") : null;
+        checks.push({ record: `${rt}/${rid}`, version: Number(ver), title: rec?.["title"] ?? null, done: (rec?.["executionPeriod"] as { end?: string } | undefined)?.end ?? null,
+          signedBy: sig.who.reference, signerName: name, when: sig.when, valid, knownKey: !!pub });
+      }
+    }
+    return c.json({ checks, allValid: checks.length > 0 && checks.every((x) => x.valid) });
+  });
+
   app.get("/:type/:id/$verify", async (c) => {
     const { type, id } = c.req.param();
     const r = await o.store.get(type, id);
@@ -856,6 +941,18 @@ export function createApp(o: ServerOptions) {
     if (!me) return c.json({ error: "sign in first" }, 401);
     const p = (await o.store.get("Person", me.split("/")[1]!))!;
     const cancel = c.req.query("cancel") === "1";
+    // Not while you're the only officer of a group that has other people: hand it over first, so it isn't orphaned.
+    if (!cancel && o.store.search) {
+      const mine = (await o.store.search("Role", { person: me })).filter((r) => r["status"] === "active" && (r["code"] as { code?: string })?.code === "officer");
+      for (const r of mine) {
+        const org = (r["organization"] as { reference: string }).reference;
+        const roles = (await o.store.search("Role", { organization: org })).filter((x) => x["status"] === "active");
+        if (roles.length > 1 && !roles.some((x) => x.id !== r.id && (x["code"] as { code?: string })?.code === "officer")) {
+          const g = await o.store.get("Organization", org.split("/")[1]!);
+          return c.json({ error: `you're the only officer of ${g?.["name"] ?? "a group"}. Make someone else an officer first` }, 409);
+        }
+      }
+    }
     const due = new Date(Date.now() + 14 * 86400000).toISOString();
     const ext = ((p["extension"] as { url: string }[] | undefined) ?? []).filter((x) => x.url !== "bayanihan:delete-after");
     const next = { ...p, meta: { ...p.meta, version: p.meta.version + 1 }, extension: cancel ? ext : [...ext, { url: "bayanihan:delete-after", value: due }] };
