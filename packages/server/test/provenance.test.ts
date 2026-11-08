@@ -14,7 +14,7 @@ class HistoryStore extends MemoryStore {
   async search(type: string, q: Record<string, string>) { return this.all().filter((x) => x.resourceType === type && Object.entries(q).every(([k, v]) => (x[k] as { reference?: string } | undefined)?.reference === v)); }
 }
 const u = (k: number) => `00000000-0000-4000-9000-${String(k).padStart(12, "0")}`;
-const [RUN, COMMS, T1, T2, ANA, MIA, DON] = [1, 2, 3, 4, 5, 6, 7].map(u);
+const [RUN, COMMS, T1, T2, ANA, MIA, DON] = [1, 2, 3, 4, 5, 6, 7].map(u) as [string, string, string, string, string, string, string];
 const org = "Organization/club";
 const role = (id: string, person: string, code: string): BixResource => ({ resourceType: "Role", id, meta: { version: 1 }, person: R(person), organization: R(org), code: { system: "bayanihan:role", code }, status: "active" });
 const ini: BixResource = { resourceType: "Initiative", id: RUN, meta: { version: 1 }, title: "Run", kind: "project", status: "active", organization: R(org) };
