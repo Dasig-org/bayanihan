@@ -1,0 +1,17 @@
+{
+  "name": "bayanihan",
+  "private": true,
+  "description": "Bayanihan Core and Bayanihan Server, the open engine and reference server for BIX.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "verify": "npm run typecheck && npm test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "Apache-2.0"
+}
