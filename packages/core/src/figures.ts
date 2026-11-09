@@ -23,10 +23,13 @@ export function computeFigure(rule: { code: string; params?: Record<string, stri
     }
     case "sum-task-hours": {
       const m = tasks.filter((t) => !p.taskCode || code(t["code"]) === p.taskCode);
+      // Each person's own period when recorded (participant.period), otherwise the Task's (BIX 2026-11-09).
+      const span = (e?: Period) => (e?.start && e?.end ? (Date.parse(e.end) - Date.parse(e.start)) / 3_600_000 : 0);
       const hours = m.reduce((sum, t) => {
-        const e = t["executionPeriod"] as Period;
-        const people = ((t["participant"] as { status: string }[] | undefined) ?? []).filter((x) => x.status === "active").length || 1;
-        return sum + (e.start && e.end ? ((Date.parse(e.end) - Date.parse(e.start)) / 3_600_000) * people : 0);
+        const e = t["executionPeriod"] as Period | undefined;
+        const people = ((t["participant"] as { status: string; period?: Period }[] | undefined) ?? []).filter((x) => x.status === "active");
+        if (!people.length) return sum + span(e);
+        return sum + people.reduce((h, x) => h + (x.period ? span(x.period) : span(e)), 0);
       }, 0);
       return { value: Math.round(hours * 100) / 100, derivedFrom: refs(m) };
     }

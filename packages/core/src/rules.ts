@@ -119,6 +119,33 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
     }
   }
 
+  // Shifts, showing up and time (BIX "Shifts, showing up and time", 2026-11-09).
+  if (next.resourceType === "Task") {
+    type P = { person: Ref; role: string; status: string; attended?: { at: string; by: Ref }; replaces?: Ref };
+    const parts = (r: BixResource | null) => ((r?.["participant"] as P[] | undefined) ?? []);
+    const key = (x: P) => x.person.reference;
+    const slots = (next["slots"] as number | undefined) ?? 1;
+    const activeN = parts(next).filter((x) => x.status === "active").length;
+    if (slots > 1 && activeN > slots) reasons.push(`this work has ${slots} places and they're all taken`);
+    const actor = ctx.actor.type === "person" ? ctx.actor.person.reference : null;
+    const lead = ctx.permissions.includes("task.assign");
+    for (const x of parts(next)) {
+      const was = parts(prev).find((y) => key(y) === key(x) && !!y.replaces === !!x.replaces);
+      // Check-in: by the person themselves or a lead; never by a model.
+      if (x.attended && JSON.stringify(x.attended) !== JSON.stringify(was?.attended)) {
+        if (ctx.actor.type === "model") reasons.push("a model can't check anyone in");
+        else if (x.attended.by?.reference !== actor) reasons.push("a check-in is recorded by whoever makes it");
+        else if (actor !== key(x) && !lead) reasons.push("only the person or a lead can check someone in");
+      }
+      // Swap: proposed by the replaced person or a lead; made active only by the named person.
+      if (x.replaces) {
+        if (!was && !(actor === x.replaces.reference || lead)) reasons.push("only the person on it, or a lead, can propose a swap");
+        if (was && was.status !== "active" && x.status === "active" && actor !== key(x)) reasons.push("only the person asked can accept the swap");
+        if (x.status === "active" && parts(next).some((y) => key(y) === x.replaces!.reference && y.status === "active")) reasons.push("a swap ends the place of the person it replaces");
+      }
+    }
+  }
+
   // Recorded when done: completed work needs review only when it matters.
   let record = next;
   if (next.resourceType === "Task" && state(prev) !== "completed" && state(next) === "completed" && next["verification"] === undefined) {
