@@ -2,7 +2,7 @@
 # On the server:  cp env.example .env  (fill it in), then  docker compose up -d --build
 services:
   bayanihan:
-    build: { context: .., dockerfile: deploy/Dockerfile }
+    build: { context: .., dockerfile: deploy/Dockerfile, additional_contexts: { bix: ../../bix } }
     image: bayanihan/server:0.1
     env_file: .env
     volumes: [ "data:/data" ]

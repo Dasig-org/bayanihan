@@ -1,5 +1,7 @@
 # Bayanihan Server, with Litestream streaming its SQLite database to S3-compatible storage.
-# Build from the repository root:  docker build -f deploy/Dockerfile -t bayanihan/server .
+# Build from the repository root, with the sibling bix repository as a named context:
+#   docker build -f deploy/Dockerfile --build-context bix=../bix -t bayanihan/server .
+# (deploy/compose.yml does this.) The lockfile links @bayanihan/bix to ../bix, so it goes to /bix.
 FROM node:24-slim
 ARG TARGETARCH
 ARG LITESTREAM_VERSION=0.5.17
@@ -9,11 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && litestream version
 WORKDIR /app
 COPY package.json package-lock.json ./
-COPY bix/package.json bix/
+COPY --from=bix package.json /bix/
 COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 RUN npm ci --omit=dev && npm cache clean --force
-COPY bix bix
+COPY --from=bix schemas /bix/schemas
+# bix's own dependencies (ajv) are installed in /app/node_modules; let /bix resolve them from there.
+RUN ln -s /app/node_modules /bix/node_modules
 COPY packages/core packages/core
 COPY packages/server packages/server
 COPY deploy/litestream.yml /etc/litestream.yml
