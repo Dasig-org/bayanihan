@@ -155,6 +155,8 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
   }
 
   if (reasons.length) return { ok: false, reasons };
+  // When this version was made (FHIR meta.lastUpdated), so apps can say "2 hours ago" without reading history.
+  record = { ...record, meta: { ...record.meta, lastUpdated: ctx.now } } as BixResource;
 
   const agent =
     ctx.actor.type === "person" ? [{ type: "author", who: ctx.actor.person }]
