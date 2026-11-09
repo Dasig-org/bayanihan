@@ -178,6 +178,15 @@ export function createApp(o: ServerOptions) {
     const dir = await loadDirectory(o.store, me, prev);
     if (authorize(me, "edit", prev, dir).allowed) return null;
     if (prev.resourceType === "Task" && prev["status"] === "ready" && next["status"] === "accepted" && authorize(me, "claim", prev, dir).allowed) return null;
+    // Taking one open place on a shift (Task.slots > 1): only adding yourself, nothing else changed.
+    if (prev.resourceType === "Task" && prev["status"] === "ready" && ((prev["slots"] as number | undefined) ?? 1) > 1 && authorize(me, "claim", prev, dir).allowed) {
+      type P = { person: { reference: string }; status: string };
+      const was = ((prev["participant"] as P[] | undefined) ?? []), now = ((next["participant"] as P[] | undefined) ?? []);
+      const added = now.filter((x) => !was.some((y) => y.person.reference === x.person.reference));
+      const strip = (r: BixResource) => JSON.stringify({ ...r, meta: undefined, participant: undefined, status: undefined });
+      if (added.length === 1 && added[0]!.person.reference === me && added[0]!.status === "active" && now.length === was.length + 1 && strip(prev) === strip(next)
+        && (next["status"] === "ready" || next["status"] === "accepted")) return null;
+    }
     if (prev.resourceType === "Task" && prev["status"] === "requested" && (prev["owner"] as { reference?: string } | undefined)?.reference === me) return null;
     if (prev.resourceType === "Person" && prev.id !== me.split("/")[1] && JSON.stringify(prev["publicKey"] ?? []) !== JSON.stringify(next["publicKey"] ?? [])) return "only the person can change their own keys";
     if (prev.resourceType === "Person" && (prev.id === me.split("/")[1] || permissionsForRecord(me, prev, dir).includes("member.manage"))) return null;

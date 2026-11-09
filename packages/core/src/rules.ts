@@ -107,7 +107,9 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
     const a = state(prev), b = state(next), me = ctx.actor.person;
     const owner = next["owner"] as Ref | undefined;
     // Claiming: you may only make yourself the owner.
-    if (a === "ready" && b === "accepted" && !same(owner, me)) reasons.push("you can claim a task only for yourself");
+    // (A shift with several places fills up instead: it stays owned by its team; BIX 2026-11-09.)
+    const shiftFull = ((next["slots"] as number | undefined) ?? 1) > 1 && same(owner, prev["owner"] as Ref);
+    if (a === "ready" && b === "accepted" && !same(owner, me) && !shiftFull) reasons.push("you can claim a task only for yourself");
     // Asking someone needs task.assign.
     if (a === "ready" && b === "requested" && !ctx.permissions.includes("task.assign")) reasons.push("asking someone needs task.assign");
     // Only the person asked can accept (rule 17).
