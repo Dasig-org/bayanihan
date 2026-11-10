@@ -12,6 +12,7 @@
     "start": "tsx src/main.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1166.0",
     "@bayanihan/core": "^0.1.0",
     "@hono/node-server": "^1.13.0",
     "@noble/hashes": "^1.8.0",

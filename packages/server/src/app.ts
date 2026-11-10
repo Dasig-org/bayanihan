@@ -40,6 +40,11 @@ export type ServerOptions = {
    * only the link (provider, subject) → Person. Docs: docs/auth/DASIG_ACCOUNTS.md.
    */
   oidc?: { providers: Record<string, { verify(idToken: string): Promise<{ sub: string; name?: string } | null> }>; identities: { personFor(provider: string, subject: string): Promise<string | null>; link(provider: string, subject: string, person: string): Promise<void> } };
+  /**
+   * Optional storage allowance per group, set by whoever hosts this server (e.g. BIX_GROUP_STORAGE_BYTES). Without it,
+   * there's no limit. Uploads with ?org= count against that group; at the limit new uploads are refused, nothing else is.
+   */
+  storage?: { perGroupBytes: number; groups: { add(hash: string, org: string, size: number): Promise<void>; used(org: string): Promise<number> } };
   /** Origins allowed to call this server from a browser (the Dasig web app). Default: any. */
   corsOrigins?: string[];
   /** Turn CORS off on a phone or hub: only native apps call it, and React Native's Response has no body stream for middleware to rewrap. */
@@ -359,7 +364,17 @@ export function createApp(o: ServerOptions) {
     if (!bytes.byteLength) return c.json({ error: "empty file" }, 400);
     if (bytes.byteLength > MAX_FILE_BYTES) return c.json({ error: "files up to 15 MB" }, 413);
     const showsMinors = c.req.query("showsMinors") === "true";
+    // The group this file is for, when the host sets a storage allowance. Only its members may add to it.
+    const org = c.req.query("org");
+    if (org && o.storage) {
+      const member = o.store.search ? (await o.store.search("Role", { person: me, organization: org })).some((r) => r["status"] === "active") : false;
+      if (!member) return c.json({ error: "you're not in that group" }, 403);
+      const used = await o.storage.groups.used(org);
+      if (used + bytes.byteLength > o.storage.perGroupBytes)
+        return c.json({ error: "your group has used all of its storage on this server. Photos already here stay, and your phones keep working", used, allowance: o.storage.perGroupBytes }, 413);
+    }
     const m = await o.files.put(bytes, { contentType: type, uploadedBy: me, showsMinors });
+    if (org && o.storage) await o.storage.groups.add(m.hash, org, m.size);
     const title = c.req.query("title");
     return c.json({ contentType: m.contentType, url: `/$files/${m.hash}`, hash: m.hash, size: m.size, ...(title ? { title } : {}), showsMinors: m.showsMinors, capturedAt: o.now() }, 201);
   });
@@ -890,6 +905,15 @@ export function createApp(o: ServerOptions) {
    * A listed group's logo, for anyone: only for groups that chose "Anyone can find it", only the file the group set as
    * its logo, and never a photo marked as showing children.
    */
+  /** A group's storage on this server: used, and the allowance (null when the host sets none). For its members. */
+  app.get("/Organization/:id/$storage", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    const org = `Organization/${c.req.param("id")}`;
+    const member = me && o.store.search ? (await o.store.search("Role", { person: me, organization: org })).some((r) => r["status"] === "active") : false;
+    if (!member) return c.json({ error: "not found" }, 404);
+    return c.json({ used: o.storage ? await o.storage.groups.used(org) : null, allowance: o.storage?.perGroupBytes ?? null });
+  });
+
   app.get("/Organization/:id/$logo", async (c) => {
     const org = await o.store.get("Organization", c.req.param("id"));
     const hash = org ? logoHash(org) : null;

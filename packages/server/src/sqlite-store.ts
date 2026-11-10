@@ -21,6 +21,7 @@ create trigger if not exists bix_history_no_delete before delete on bix_history 
 create table if not exists bix_keys (owner text primary key, key_id text not null, public_key text not null, private_key text not null);
 create table if not exists bix_sequences (prefix text primary key, next integer not null);
 create table if not exists bix_link_tokens (token_hash text primary key, link_id text not null);
+create table if not exists bix_file_groups (hash text not null, org text not null, size integer not null, primary key (hash, org));
 create table if not exists bix_files (hash text primary key, content_type text not null, size integer not null, uploaded_by text not null, shows_minors integer not null);
 create table if not exists bix_file_bytes (hash text primary key, data text not null);
 create table if not exists bix_devices (token_hash text primary key, person_id text not null, created_at text not null);
@@ -143,5 +144,10 @@ export async function sqliteStore(db: Db) {
     async personFor(provider: string, subject: string) { const r = await db.all<{ person_id: string }>("select person_id from bix_identities where provider = ? and subject = ?", provider, subject); return r[0]?.person_id ?? null; },
     async link(provider: string, subject: string, person: string) { await db.run("insert or replace into bix_identities values (?, ?, ?, ?)", provider, subject, person, now()); },
   };
-  return { store, keys, sequences, linkTokens, fileMeta, files, devices, identities };
+  /** Which group's storage each file counts against (a file shared by two groups counts once in each). */
+  const groupFiles = {
+    async add(hash: string, org: string, size: number) { await db.run("insert or ignore into bix_file_groups values (?, ?, ?)", hash, org, size); },
+    async used(org: string) { const r = await db.all<{ n: number | null }>("select sum(size) as n from bix_file_groups where org = ?", org); return Number(r[0]?.n ?? 0); },
+  };
+  return { store, keys, sequences, linkTokens, fileMeta, files, devices, identities, groupFiles };
 }

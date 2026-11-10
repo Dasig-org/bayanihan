@@ -66,9 +66,15 @@ async function options(): Promise<ServerOptions> {
     const { nodeSqlite } = await import("./node-sqlite.js");
     mkdirSync(dirname(env.BIX_DB), { recursive: true });
     const s = await sqliteStore(nodeSqlite(env.BIX_DB));
+    // Files in S3-compatible storage when configured (BIX_FILES_S3_BUCKET); files already in the database stay readable.
+    if (env.BIX_FILES_S3_BUCKET) {
+      const { s3Files, awsS3 } = await import("./files-s3.js");
+      s.files = s3Files(await awsS3(env.BIX_FILES_S3_BUCKET, env.AWS_REGION ?? "ap-southeast-1", env.BIX_FILES_S3_ENDPOINT), env.BIX_FILES_S3_PREFIX ?? "files/", s.fileMeta, s.files);
+    }
     return {
       ...common, store: s.store, keys: s.keys, sequences: s.sequences, linkTokens: s.linkTokens, files: s.files, devices: s.devices,
       ...(env.GOOGLE_CLIENT_IDS ? { google: { identities: s.identities, verify: await googleVerifier(env.GOOGLE_CLIENT_IDS.split(",").map((x) => x.trim()).filter(Boolean)) } } : {}),
+      ...(env.BIX_GROUP_STORAGE_BYTES ? { storage: { perGroupBytes: Number(env.BIX_GROUP_STORAGE_BYTES), groups: s.groupFiles } } : {}),
       ...(env.BIX_OIDC_PROVIDERS ? { oidc: { identities: s.identities, providers: await oidcProviders(env.BIX_OIDC_PROVIDERS) } } : {}),
       ...(env.BIX_OPEN_JOIN === "1" ? { openJoin: { audience: env.BIX_PUBLIC_URL ?? `http://localhost:${port}`, perHour: Number(env.BIX_JOIN_PER_HOUR ?? 10) } } : {}),
       async identify(req) {
