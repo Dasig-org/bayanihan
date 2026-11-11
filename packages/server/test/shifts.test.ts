@@ -55,7 +55,7 @@ describe("reports", () => {
     await store.commit({ resourceType: "Role", id: u(21), meta: { version: 1 }, person: R("Person/mia"), organization: R(org), code: { system: "bayanihan:role", code: "volunteer-episodic" }, status: "active" } as never, prov());
     const app = createApp({ store, async identify(req) { return { person: req.headers.get("x-bix-person") }; }, now: () => "2026-03-07T20:00:00+08:00", newId });
     const report = { resourceType: "Report", id: u(22), meta: { version: 1 }, owedBy: R(org), owedTo: R(org), period: { start: "2026-03-06T00:00:00+08:00", end: "2026-03-07T00:00:00+08:00" },
-      status: "submitted", narrative: "It went well.", figures: [{ code: { system: "bayanihan:report-figure", code: "volunteers-active" }, value: 16 }] };
+      status: "submitted", narrative: "It went well.", figures: [{ code: { system: "bayanihan:report-figure", code: "volunteers-active" }, value: 16, rule: { code: "count-tasks" }, derivedFrom: [] }] };
     const send = (who: string) => app.request("/", { method: "POST", headers: { "content-type": "application/json", "x-bix-person": who }, body: JSON.stringify({ type: "transaction", entry: [{ resource: report }] }) });
     expect((await send("Person/mia")).status).toBe(409);
     expect((await send("Person/ana")).status).toBe(200);
