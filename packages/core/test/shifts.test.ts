@@ -51,10 +51,22 @@ describe("swap", () => {
 });
 
 describe("hours", () => {
-  it("counts each person's own time when recorded, otherwise the work's", () => {
-    const done = { ...base, status: "completed", executionPeriod: { start: "2026-03-06T05:00:00+08:00", end: "2026-03-06T07:30:00+08:00" },
-      participant: [p("Person/mia"), p("Person/liza", { period: { start: "2026-03-06T06:00:00+08:00", end: "2026-03-06T07:30:00+08:00" } })] } as BixResource;
-    const f = computeFigure({ code: "sum-task-hours" }, [done], { start: "2026-03-01T00:00:00+08:00", end: "2026-03-31T00:00:00+08:00" });
-    expect(f.value).toBe(4);
+  const per = { start: "2026-03-01T00:00:00+08:00", end: "2026-03-31T00:00:00+08:00" };
+  const doneT = (over: Partial<BixResource>, people: unknown[]) => ({ ...base, status: "completed", executionPeriod: { start: "2026-03-02T08:00:00+08:00", end: "2026-03-06T08:00:00+08:00" }, participant: people, ...over }) as BixResource;
+  const h = (t: BixResource) => computeFigure({ code: "sum-task-hours" }, [t], per).value;
+  it("counts own period, then own hours, then the estimate; never taken-to-done (4 days here)", () => {
+    expect(h(doneT({ estimate: { value: 2.5, unit: "h" } }, [p("Person/mia", { period: { start: "2026-03-06T06:00:00+08:00", end: "2026-03-06T07:30:00+08:00" } }), p("Person/liza", { hours: { value: 3, source: "stated" } }), p("Person/ben")]))).toBe(1.5 + 3 + 2.5);
+    expect(h(doneT({}, [p("Person/mia")]))).toBe(0);
+  });
+  it("uses the shift's window, and shares a per-task estimate", () => {
+    expect(h(doneT({ restriction: { period: { start: "2026-03-06T05:00:00+08:00", end: "2026-03-06T07:30:00+08:00" } } }, [p("Person/mia"), p("Person/liza")]))).toBe(5);
+    expect(h(doneT({ estimate: { value: 90, unit: "min", per: "task" } }, [p("Person/mia"), p("Person/liza")]))).toBe(1.5);
+  });
+  it("only the person or a lead records hours", () => {
+    const on = v(base, 2, { participant: [p("Person/mia")] });
+    const said = v(on, 3, { participant: [p("Person/mia", { hours: { value: 2, source: "stated" } })] });
+    expect(applyChange(on, said, as("Person/mia")).ok).toBe(true);
+    expect(applyChange(on, said, as("Person/liza")).ok).toBe(false);
+    expect(applyChange(on, said, as("Person/ben", ["task.assign"])).ok).toBe(true);
   });
 });

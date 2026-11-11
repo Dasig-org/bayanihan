@@ -147,6 +147,11 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
         else if (x.attended.by?.reference !== actor) reasons.push("a check-in is recorded by whoever makes it");
         else if (actor !== key(x) && !lead) reasons.push("only the person or a lead can check someone in");
       }
+      // Hours given: by the person or a lead; never by a model (BIX "Planned and given time").
+      if (JSON.stringify((x as any).hours) !== JSON.stringify((was as any)?.hours) && (x as any).hours) {
+        if (ctx.actor.type === "model") reasons.push("a model can't record anyone's hours");
+        else if (actor !== key(x) && !lead) reasons.push("only the person or a lead can record their hours");
+      }
       // Swap: proposed by the replaced person or a lead; made active only by the named person.
       if (x.replaces) {
         if (!was && !(actor === x.replaces.reference || lead)) reasons.push("only the person on it, or a lead, can propose a swap");

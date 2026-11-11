@@ -3,7 +3,7 @@ import { generateGroupKey, signRecord, verifyRecord, canonical, computeFigure, p
 
 const done = (id: string, start: string, end: string, people = 1, over: Partial<BixResource> = {}): BixResource => ({
   resourceType: "Task", id, meta: { version: 3 }, intent: "plan", status: "completed", verification: "not-required",
-  code: { system: "bayanihan:step", code: "tutor" }, executionPeriod: { start, end },
+  code: { system: "bayanihan:step", code: "tutor" }, executionPeriod: { start, end }, restriction: { period: { start, end } }, // a session: its time is the shift (BIX 2026-11-11)
   participant: Array.from({ length: people }, (_, i) => ({ person: { reference: `Person/p${i}` }, role: i ? "helper" : "owner", status: "active" })), ...over,
 });
 

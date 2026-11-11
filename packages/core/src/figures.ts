@@ -29,14 +29,9 @@ export function computeFigure(rule: { code: string; params?: Record<string, stri
     }
     case "sum-task-hours": {
       const m = tasks.filter((t) => !p.taskCode || code(t["code"]) === p.taskCode);
-      // Each person's own period when recorded (participant.period), otherwise the Task's (BIX 2026-11-09).
-      const span = (e?: Period) => (e?.start && e?.end ? (Date.parse(e.end) - Date.parse(e.start)) / 3_600_000 : 0);
-      const hours = m.reduce((sum, t) => {
-        const e = t["executionPeriod"] as Period | undefined;
-        const people = ((t["participant"] as { status: string; period?: Period }[] | undefined) ?? []).filter((x) => x.status === "active");
-        if (!people.length) return sum + span(e);
-        return sum + people.reduce((h, x) => h + (x.period ? span(x.period) : span(e)), 0);
-      }, 0);
+      // Per person, first match wins (BIX "Planned and given time", 2026-11-11): own period, own hours, the shift's
+      // window, the estimate. Never executionPeriod (taken → marked done), which isn't time given.
+      const hours = m.reduce((sum, t) => sum + taskHours(t), 0);
       return { value: Math.round(hours * 100) / 100, derivedFrom: refs(m) };
     }
     case "sum-task-output": {
@@ -62,3 +57,22 @@ export function computeFigure(rule: { code: string; params?: Record<string, stri
 
 /** Public views never show small numbers for one place and group. */
 export const publicFigure = (value: number): string => (value > 0 && value < 5 ? "fewer than 5" : String(value));
+
+type P = { status: string; period?: Period; hours?: { value: number } };
+const span = (e?: Period) => (e?.start && e?.end ? Math.max(0, (Date.parse(e.end) - Date.parse(e.start)) / 3_600_000) : 0);
+/** Hours one person gave to one piece of work, by the BIX counting order. */
+export function personHours(t: BixResource, x: P): number {
+  if (x.period?.start && x.period?.end) return span(x.period);
+  if (x.hours) return x.hours.value;
+  const shift = (t["restriction"] as { period?: Period } | undefined)?.period;
+  if (shift?.start && shift?.end) return span(shift);
+  const est = t["estimate"] as { value: number; unit: "min" | "h"; per?: "person" | "task" } | undefined;
+  if (!est) return 0;
+  const h = est.unit === "min" ? est.value / 60 : est.value;
+  const n = ((t["participant"] as P[] | undefined) ?? []).filter((y) => y.status === "active").length || 1;
+  return est.per === "task" ? h / n : h;
+}
+/** Hours everyone gave to one piece of work. */
+export function taskHours(t: BixResource): number {
+  return ((t["participant"] as P[] | undefined) ?? []).filter((x) => x.status === "active").reduce((h, x) => h + personHours(t, x), 0);
+}
