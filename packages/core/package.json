@@ -38,5 +38,11 @@
     "src",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./figures": "./src/figures.ts",
+    "./sign": "./src/sign.ts",
+    "./package.json": "./package.json"
+  }
 }
