@@ -45,6 +45,8 @@ export type ServerOptions = {
    * there's no limit. Uploads with ?org= count against that group; at the limit new uploads are refused, nothing else is.
    */
   storage?: { perGroupBytes: number; groups: { add(hash: string, org: string, size: number): Promise<void>; used(org: string): Promise<number> } };
+  /** Philippine places (PSGC) for /$places; the Node server loads data/psgc.json. Omitted on phones. */
+  places?: () => Promise<{ version: string; search(q: string, limit?: number): import("./places.js").Place[]; byCode(code: string): import("./places.js").Place | null }>;
   /** Origins allowed to call this server from a browser (the Dasig web app). Default: any. */
   corsOrigins?: string[];
   /** Turn CORS off on a phone or hub: only native apps call it, and React Native's Response has no body stream for middleware to rewrap. */
@@ -871,11 +873,11 @@ export function createApp(o: ServerOptions) {
    */
   /** Philippine places (PSGC), for choosing where a group or event is. Public, no sign-in; nothing is stored. */
   app.get("/$places", async (c) => {
-    const { searchPlaces, placeByCode, psgcVersion } = await import("./places.js");
+    if (!o.places) return c.json({ error: "this server has no place list" }, 404);
+    const pl = await o.places();
     const code = c.req.query("code");
-    if (code) { const p = placeByCode(code); return p ? c.json(p) : c.json({ error: "not found" }, 404); }
-    const entry = searchPlaces(c.req.query("q") ?? "", Number(c.req.query("limit") ?? 10));
-    return c.json({ entry, source: `PSGC (PSA), via the open-source barangay project (MIT), ${psgcVersion}` });
+    if (code) { const p = pl.byCode(code); return p ? c.json(p) : c.json({ error: "not found" }, 404); }
+    return c.json({ entry: pl.search(c.req.query("q") ?? "", Number(c.req.query("limit") ?? 10)), source: `PSGC (PSA), via the open-source barangay project (MIT), ${pl.version}` });
   });
 
   app.get("/$directory", async (c) => {

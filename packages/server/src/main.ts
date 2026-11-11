@@ -23,7 +23,7 @@ const devHeaders = env.BIX_DEV_HEADERS === "1";
 if (devHeaders && production) { console.error("BIX_DEV_HEADERS lets anyone act as anyone; it is refused in production."); process.exit(1); }
 const corsOrigins = env.BIX_CORS_ORIGINS ? env.BIX_CORS_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
 const port = Number(env.PORT ?? 8787);
-const common = { now: () => new Date().toISOString(), newId: randomUUID, ...(corsOrigins ? { corsOrigins } : {}) };
+const common = { places, now: () => new Date().toISOString(), newId: randomUUID, ...(corsOrigins ? { corsOrigins } : {}) };
 
 const tokenDays = Number(env.BIX_TOKEN_DAYS ?? 0);
 /** Google ID tokens, checked against Google's published keys (cached by jose), for the given client IDs. */
@@ -58,6 +58,14 @@ async function oidcProviders(spec: string) {
     } };
   }
   return out;
+}
+
+/** The PSGC place list, read once on first use (data/psgc.json; credits in data/PSGC_NOTICE.md). */
+let placesCache: ReturnType<typeof import("./places.js").placesIndex> | null = null;
+async function places() {
+  if (!placesCache) { const { readFileSync } = await import("node:fs"); const { placesIndex } = await import("./places.js");
+    placesCache = placesIndex(JSON.parse(readFileSync(new URL("../data/psgc.json", import.meta.url), "utf8"))); }
+  return placesCache;
 }
 
 async function options(): Promise<ServerOptions> {
