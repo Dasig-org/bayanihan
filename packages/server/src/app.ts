@@ -271,6 +271,15 @@ export function createApp(o: ServerOptions) {
   });
 
   /** POST a Bundle. "transaction": one change, applied now. "sync": offline changes, replayed in order. */
+  /**
+   * A change the server already has, sent again (a retry after an interrupted request, a phone resending its outbox).
+   * Same record, same version, and every field it sends equals what's stored: it's the same change, so it's accepted,
+   * not refused as stale. The server's own additions (references, meta.lastUpdated) don't count as differences.
+   */
+  const same = (a: unknown, b: unknown): boolean => JSON.stringify(a, Object.keys((a ?? {}) as object).sort()) === JSON.stringify(b, Object.keys((a ?? {}) as object).sort()) || JSON.stringify(a) === JSON.stringify(b);
+  const isReplay = (prev: BixResource | null, next: BixResource) =>
+    !!prev && prev.meta.version === next.meta.version && Object.entries(next).every(([k, v]) => k === "meta" || JSON.stringify(v) === JSON.stringify(prev[k]) || same(v, prev[k]));
+
   app.post("/", async (c) => {
     const me = (await o.identify(c.req.raw)).person;
     if (!me) return c.json({ error: "sign in, or use a link" }, 401);
@@ -285,6 +294,7 @@ export function createApp(o: ServerOptions) {
       const results = [];
       for (const e of entries) {
         const prev = await o.store.get(e.resource.resourceType, e.resource.id);
+        if (isReplay(prev, e.resource)) { results.push({ ok: true, record: prev }); continue; }
         const why = (prev ? await canUpdate(me, prev, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource))) ?? (await privacyWhy(e.resource));
         if (why) { results.push({ ok: false, reasons: [why], current: prev }); continue; }
         const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now() });
@@ -302,6 +312,7 @@ export function createApp(o: ServerOptions) {
       const refusedNew = [];
       for (const e of entries) {
         const prevRec = await o.store.get(e.resource.resourceType, e.resource.id);
+        if (isReplay(prevRec, e.resource)) continue;
         const why = (prevRec ? await canUpdate(me, prevRec, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource))) ?? (await privacyWhy(e.resource));
         if (why) { refusedNew.push({ record: e.resource, reasons: [why], current: prevRec }); continue; }
         changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: await ctxFor(e.resource) });

@@ -61,3 +61,14 @@ describe("reports", () => {
     expect((await send("Person/ana")).status).toBe(200);
   });
 });
+
+describe("retries", () => {
+  it("sending the same change twice is accepted, not refused as stale; a real conflict still is", async () => {
+    const { commit, get } = setup();
+    const t = join(await get(), "Person/mia");
+    expect((await commit("Person/mia", t)).status).toBe(200);
+    expect((await commit("Person/mia", t)).status).toBe(200);
+    const other = { ...t, title: "Something else" } as BixResource;
+    expect((await commit("Person/mia", other)).status).toBe(409);
+  });
+});
