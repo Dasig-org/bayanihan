@@ -17,6 +17,8 @@ export type Context = {
   involvesMoneyOrBeneficiaries?: boolean;
   /** For Tasks: does this kind of work need review? (TaskDefinition.review or Task.reviewer) */
   reviewRequired?: boolean;
+  /** The actor made this draft (from its Provenance), so they may withdraw it, and cancel its drafts, without a lead's permission. */
+  closesOwnDraft?: boolean;
   /** The id generator for new Provenance records. */
   newId: () => string;
 };
@@ -99,8 +101,14 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
   }
 
   // Leaving draft needs a person with permission, or a declared rule (rule 4).
-  if (prev && isDraft(prev) && !isDraft(next) && ctx.actor.type === "person" && !ctx.permissions.some((p) => ["task.assign", "initiative.plan", "member.manage", "org.manage"].includes(p))) {
+  const closingOwn = !!ctx.closesOwnDraft && ["cancelled", "withdrawn"].includes(String(state(next)));
+  if (prev && isDraft(prev) && !isDraft(next) && !closingOwn && ctx.actor.type === "person" && !ctx.permissions.some((p) => ["task.assign", "initiative.plan", "member.manage", "org.manage"].includes(p))) {
     reasons.push("accepting a proposal needs a lead's permission");
+  }
+
+  // A group's assistance areas are its own choice: only a person with org.manage changes them (BIX rule 22).
+  if (next.resourceType === "Organization" && JSON.stringify(prev?.["assist"] ?? []) !== JSON.stringify(next["assist"] ?? [])) {
+    if (ctx.actor.type !== "person" || !ctx.permissions.includes("org.manage")) reasons.push("turning assistance on or off needs org.manage");
   }
 
   if (next.resourceType === "Task" && prev && ctx.actor.type === "person") {

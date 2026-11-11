@@ -25,6 +25,8 @@ export const lifecycles: Record<string, { field: string; graph: Graph }> = {
   TaskDefinition: { field: "status", graph: { draft: ["active"], active: ["retired"], retired: [] } },
   ShareLink: { field: "status", graph: { active: ["revoked"], revoked: [] } },
   Consent: { field: "status", graph: { active: ["withdrawn"], withdrawn: ["active"] } },
+  // BIX "Proposed edits and assistance" (2026-11-11). `outdated` is set by rule when the target moves past `basedOn`.
+  ChangeProposal: { field: "status", graph: { draft: ["accepted", "declined", "withdrawn", "outdated"], accepted: [], declined: [], withdrawn: [], outdated: [] } },
 };
 
 export function canTransition(resourceType: string, from: string, to: string): boolean {
