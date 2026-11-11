@@ -36,6 +36,11 @@ export function owningParty(record: BixResource, dir: Directory): { organization
   if (record.resourceType === "Organization") return { organization: refOf(record) };
   if (record.resourceType === "Person") return { person: refOf(record), organization: ref(record["managedBy"])?.startsWith("Organization/") ? ref(record["managedBy"]) : undefined };
   if (record.resourceType === "Initiative") return { organization: ref(record["organization"]), person: ref(record["person"]), initiative: refOf(record) };
+  // A Report belongs to the group that owes it (owedBy), about the project in its scope.
+  if (record.resourceType === "Report") {
+    const by = ref(record["owedBy"]); const ini = ((record["scope"] as { initiative?: Ref[] } | undefined)?.initiative ?? [])[0]?.reference;
+    return { organization: by?.startsWith("Organization/") ? by : undefined, person: by?.startsWith("Person/") ? by : undefined, ...(ini ? { initiative: ini } : {}) };
+  }
   if (record.resourceType === "Team") {
     const ini = dir.initiatives.find((i) => refOf(i) === ref(record["initiative"]));
     return { organization: ref(record["organization"]), initiative: ini ? refOf(ini) : undefined, team: refOf(record) };

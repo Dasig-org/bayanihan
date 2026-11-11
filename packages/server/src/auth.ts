@@ -18,7 +18,7 @@ export async function loadDirectory(store: Searchable, person: string | null, re
   await add("Team", ref(record["team"]));
   await add("Team", ref(record["owner"]));
   for (const t of [...dir.teams]) await add("Initiative", ref(t["initiative"]));
-  await add("Initiative", ref(record["initiative"]) ?? ref(record["partOf"]));
+  await add("Initiative", ref(record["initiative"]) ?? ref(record["partOf"]) ?? ref(((record["scope"] as { initiative?: unknown[] } | undefined)?.initiative ?? [])[0]));
   const ini = dir.initiatives[0];
   if (ini && store.search) dir.teams.push(...(await store.search("Team", { initiative: `Initiative/${ini.id}` })).filter((t) => !dir.teams.some((x) => x.id === t.id)));
   if (person && store.search) {

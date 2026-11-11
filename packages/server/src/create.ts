@@ -18,6 +18,7 @@ export function canCreate(me: string, r: BixResource, dir: Directory): string | 
       return "adding someone to a group needs member.manage";
     }
     case "Initiative": case "Team": case "Position": case "InitiativeTemplate": case "Goal": case "SharingPolicy": case "TaskDefinition": case "Report":
+      if (r.resourceType === "Report") return perms.has("report.submit") ? null : "sending a report needs report.submit (officers have it)";
       if (r.resourceType === "Initiative" && ref(r["person"]) === me && !ref(r["organization"])) return null; // personal project
       if (r.resourceType === "Goal" && (perms.has("org.manage") || perms.has("initiative.plan"))) return null;
       return perms.has("initiative.plan") || perms.has("org.manage") ? null : "planning needs initiative.plan";
