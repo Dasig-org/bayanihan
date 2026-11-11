@@ -24,7 +24,8 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "whatwg-fetch": "^3.6.20"
   },
   "author": "Dasig Inc. <hello@dasig.org>",
   "homepage": "https://github.com/Dasig-org/bayanihan#readme",

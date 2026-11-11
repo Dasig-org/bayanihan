@@ -6,7 +6,7 @@ describe("on React Native's fetch (whatwg-fetch), as on the phone", () => {
     const g = globalThis as Record<string, unknown>;
     const saved = { Request: g.Request, Response: g.Response, Headers: g.Headers, fetch: g.fetch };
     delete g.Request; delete g.Response; delete g.Headers; delete g.fetch;
-    createRequire(import.meta.url)("/tmp/whatwg-fetch.js");
+    createRequire(import.meta.url)("whatwg-fetch/dist/fetch.umd.js");
     try {
       const { createApp, sqliteStore, hashToken } = await import("../src/index.js");
       const { nodeDb } = await import("./node-db.js");
