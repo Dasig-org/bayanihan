@@ -32,10 +32,13 @@ export function s3Files(s3: S3Like, prefix: string, meta: Meta, previous?: FileS
   };
 }
 
-/** An S3Like from the AWS SDK. Credentials come from the usual AWS environment variables or role. */
-export async function awsS3(bucket: string, region: string, endpoint?: string): Promise<S3Like> {
+/**
+ * An S3Like from the AWS SDK. Pass credentials to keep them separate from other AWS users in the same process (e.g. the
+ * database backup); otherwise the usual AWS environment variables or role are used.
+ */
+export async function awsS3(bucket: string, region: string, endpoint?: string, credentials?: { accessKeyId: string; secretAccessKey: string }): Promise<S3Like> {
   const { S3Client, PutObjectCommand, GetObjectCommand } = await import("@aws-sdk/client-s3");
-  const c = new S3Client({ region, ...(endpoint ? { endpoint, forcePathStyle: true } : {}) });
+  const c = new S3Client({ region, ...(endpoint ? { endpoint, forcePathStyle: true } : {}), ...(credentials ? { credentials } : {}) });
   return {
     async put(Key, Body, ContentType) { await c.send(new PutObjectCommand({ Bucket: bucket, Key, Body, ContentType, ServerSideEncryption: "AES256" })); },
     async get(Key) {

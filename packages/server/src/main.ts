@@ -69,7 +69,8 @@ async function options(): Promise<ServerOptions> {
     // Files in S3-compatible storage when configured (BIX_FILES_S3_BUCKET); files already in the database stay readable.
     if (env.BIX_FILES_S3_BUCKET) {
       const { s3Files, awsS3 } = await import("./files-s3.js");
-      s.files = s3Files(await awsS3(env.BIX_FILES_S3_BUCKET, env.AWS_REGION ?? "ap-southeast-1", env.BIX_FILES_S3_ENDPOINT), env.BIX_FILES_S3_PREFIX ?? "files/", s.fileMeta, s.files);
+      s.files = s3Files(await awsS3(env.BIX_FILES_S3_BUCKET, env.BIX_FILES_S3_REGION ?? env.AWS_REGION ?? "ap-southeast-1", env.BIX_FILES_S3_ENDPOINT,
+        env.BIX_FILES_S3_ACCESS_KEY_ID && env.BIX_FILES_S3_SECRET_ACCESS_KEY ? { accessKeyId: env.BIX_FILES_S3_ACCESS_KEY_ID, secretAccessKey: env.BIX_FILES_S3_SECRET_ACCESS_KEY } : undefined), env.BIX_FILES_S3_PREFIX ?? "files/", s.fileMeta, s.files);
     }
     return {
       ...common, store: s.store, keys: s.keys, sequences: s.sequences, linkTokens: s.linkTokens, files: s.files, devices: s.devices,
