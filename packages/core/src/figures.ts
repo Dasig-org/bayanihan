@@ -17,6 +17,12 @@ export function computeFigure(rule: { code: string; params?: Record<string, stri
   const tasks = records.filter((r) => r.resourceType === "Task" && done(r) && inside(r["executionPeriod"] as Period, period));
   const refs = (rs: BixResource[]) => rs.map((r) => `${r.resourceType}/${r.id}`);
   switch (rule.code) {
+    case "count-participants": {
+      const m = tasks.filter((t) => !p.taskCode || code(t["code"]) === p.taskCode);
+      const people = new Set(m.flatMap((t) => ((t["participant"] as { person: { reference: string }; status: string; attended?: unknown }[] | undefined) ?? [])
+        .filter((x) => x.status === "active" && (!p.attended || x.attended)).map((x) => x.person.reference)));
+      return { value: people.size, derivedFrom: refs(m) };
+    }
     case "count-tasks": {
       const m = tasks.filter((t) => !p.taskCode || code(t["code"]) === p.taskCode);
       return { value: m.length, derivedFrom: refs(m) };
