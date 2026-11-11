@@ -13,5 +13,10 @@ describe("Philippine places (PSGC)", () => {
     expect(pl.search("cebu")[0]!.kind).toBe("city");
     expect(pl.search("brgy lahug")[0]!.name).toBe("Lahug");
   });
+  it("Cebu City and Cebu province come first", () => {
+    expect(pl.search("cebu city")[0]!.name).toBe("City of Cebu");
+    const top = pl.search("cebu").slice(0, 2).map((x) => `${x.kind}:${x.name}`);
+    expect(top).toEqual(expect.arrayContaining(["city:City of Cebu", "province:Cebu"]));
+  });
   it("looks a place up by its code", () => { expect(pl.byCode("0730600041")?.name).toBe("Lahug"); });
 });

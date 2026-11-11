@@ -22,13 +22,17 @@ function buildIndex(d: PsgcData): Index {
     const kind = KIND[t] ?? "other";
     const label = [name, ...chain].join(", ");
     // Cities and provinces first for short queries; barangays when the query names one.
-    return { place: { code, name, kind, label }, tokens: words(label), rank: kind === "city" ? 0 : kind === "municipality" ? 1 : kind === "province" ? 2 : 3 };
+    return { place: { code, name, kind, label }, tokens: words(label), rank: kind === "city" ? 0 : kind === "province" ? 1 : kind === "municipality" ? 2 : 3 };
   });
 }
 function searchPlaces(index: Index, q: string, limit: number): Place[] {
   const want = words(q); if (!want.length) return [];
   const hits = index.filter((x) => want.every((w) => x.tokens.some((t) => t.startsWith(w))));
-  const first = words(q)[0]!;
-  hits.sort((a, b) => Number(!words(b.place.name)[0]?.startsWith(first)) - Number(!words(a.place.name)[0]?.startsWith(first)) || a.rank - b.rank || a.place.label.length - b.place.label.length);
+  // Best first: the name is exactly what was typed ("Cebu City" → City of Cebu, "Cebu" → the province and the city),
+  // then names that start with it, then cities, municipalities, provinces, barangays, then shorter labels.
+  const name = (x: Index[number]) => words(x.place.name).join(" ");
+  const asked = want.join(" ");
+  const score = (x: Index[number]) => (name(x) === asked ? 0 : name(x).startsWith(asked) ? 1 : 2);
+  hits.sort((a, b) => score(a) - score(b) || a.rank - b.rank || a.place.label.length - b.place.label.length);
   return hits.slice(0, Math.min(limit, 25)).map((x) => x.place);
 }
