@@ -45,3 +45,7 @@ v0.1, in pilot. The API follows FHIR's REST patterns; see the server's [README](
 ## Licence
 
 **Apache-2.0**, see [`LICENSE`](LICENSE). Maintained by Dasig Inc. Questions: hello@dasig.org.
+
+## Credits
+
+Philippine places (PSGC codes for regions, provinces, cities, municipalities and barangays) come from the **Philippine Statistics Authority**, as packaged by the open-source [barangay](https://github.com/bendlikeabamboo/barangay-api) project by Manuel B. (MIT). See `packages/server/data/PSGC_NOTICE.md`.

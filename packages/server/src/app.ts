@@ -869,6 +869,15 @@ export function createApp(o: ServerOptions) {
    * The public directory: summaries of groups and projects that chose to be found. Filters: cause (a bayanihan:cause
    * code), q (words in the name or title), place (words in the place). Never people, tasks or files.
    */
+  /** Philippine places (PSGC), for choosing where a group or event is. Public, no sign-in; nothing is stored. */
+  app.get("/$places", async (c) => {
+    const { searchPlaces, placeByCode, psgcVersion } = await import("./places.js");
+    const code = c.req.query("code");
+    if (code) { const p = placeByCode(code); return p ? c.json(p) : c.json({ error: "not found" }, 404); }
+    const entry = searchPlaces(c.req.query("q") ?? "", Number(c.req.query("limit") ?? 10));
+    return c.json({ entry, source: `PSGC (PSA), via the open-source barangay project (MIT), ${psgcVersion}` });
+  });
+
   app.get("/$directory", async (c) => {
     if (!o.store.search) return c.json({ entry: [] });
     const cause = c.req.query("cause"), q = (c.req.query("q") ?? "").trim(), place = (c.req.query("place") ?? "").trim().toLowerCase();
