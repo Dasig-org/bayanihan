@@ -50,9 +50,9 @@ describe("a shift with places", () => {
 describe("reports", () => {
   it("an officer can send a report for the group; a volunteer can't", async () => {
     const { sqliteStore } = await import("../src/index.js"); const { nodeDb } = await import("./node-db.js");
-    const store = (await sqliteStore(nodeDb())).store; const prov = { resourceType: "Provenance", id: "p", meta: { version: 1 } } as never;
-    await store.commit({ resourceType: "Role", id: u(20), meta: { version: 1 }, person: R("Person/ana"), organization: R(org), code: { system: "bayanihan:role", code: "officer" }, status: "active" } as never, prov);
-    await store.commit({ resourceType: "Role", id: u(21), meta: { version: 1 }, person: R("Person/mia"), organization: R(org), code: { system: "bayanihan:role", code: "volunteer-episodic" }, status: "active" } as never, prov);
+    const store = (await sqliteStore(nodeDb())).store; const prov = () => ({ resourceType: "Provenance", id: crypto.randomUUID(), meta: { version: 1 } }) as never;
+    await store.commit({ resourceType: "Role", id: u(20), meta: { version: 1 }, person: R("Person/ana"), organization: R(org), code: { system: "bayanihan:role", code: "officer" }, status: "active" } as never, prov());
+    await store.commit({ resourceType: "Role", id: u(21), meta: { version: 1 }, person: R("Person/mia"), organization: R(org), code: { system: "bayanihan:role", code: "volunteer-episodic" }, status: "active" } as never, prov());
     const app = createApp({ store, async identify(req) { return { person: req.headers.get("x-bix-person") }; }, now: () => "2026-03-07T20:00:00+08:00", newId });
     const report = { resourceType: "Report", id: u(22), meta: { version: 1 }, owedBy: R(org), owedTo: R(org), period: { start: "2026-03-06T00:00:00+08:00", end: "2026-03-07T00:00:00+08:00" },
       status: "submitted", narrative: "It went well.", figures: [{ code: { system: "bayanihan:report-figure", code: "volunteers-active" }, value: 16 }] };
