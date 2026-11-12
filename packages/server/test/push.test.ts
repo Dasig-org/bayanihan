@@ -69,7 +69,7 @@ describe("push notifications", () => {
   });
 
   it("does not repeat an ask that is only edited", async () => {
-    const t = { resourceType: "Task", id: "t1", status: "requested", owner: { reference: "Person/b" }, partOf: { reference: "Initiative/i" } };
+    const t = { resourceType: "Task", id: "t1", meta: { version: 1 }, status: "requested", owner: { reference: "Person/b" }, partOf: { reference: "Initiative/i" } };
     const get = async () => null; const search = async () => [];
     expect(await pushesFor(t, { ...t, title: "renamed" }, "Person/a", get, search)).toEqual([]);
     expect(await pushesFor(null, t, "Person/a", get, search)).toHaveLength(1);
