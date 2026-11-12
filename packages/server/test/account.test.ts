@@ -26,6 +26,10 @@ async function hosted() {
 }
 
 describe("email code sign-in", () => {
+  it("says which ways to sign in this network offers", async () => {
+    const { call } = await hosted();
+    expect((await call("/$signin")).json).toEqual({ google: true, email: true, oidc: [], nickname: true });
+  });
   it("makes an account the first time and signs back in to it after", async () => {
     const { byEmail } = await hosted();
     const first = await byEmail("Don@Example.org");

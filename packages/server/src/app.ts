@@ -809,6 +809,8 @@ export function createApp(o: ServerOptions) {
 
   /** Sign in with an OpenID Connect provider this server trusts, e.g. `{ provider: "dasig", idToken }`. */
   /** Sign out: this device's token stops working on the server, not only in the app. */
+  /** The ways to sign in this network offers, so an app shows only those. */
+  app.get("/$signin", (c) => c.json({ google: !!(o.google && o.devices && o.openJoin), email: !!(o.email && o.devices && o.openJoin), oidc: o.oidc && o.openJoin ? Object.keys(o.oidc.providers) : [], nickname: !!o.openJoin }));
   /** Email sign-in, step 1: send a 6-digit code. Same answer whether or not the email has an account. */
   app.post("/$email/start", async (c) => {
     if (!o.email || !o.devices || !o.openJoin) return c.json({ error: "email sign-in isn't set up on this server" }, 404);
