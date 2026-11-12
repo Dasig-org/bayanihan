@@ -37,6 +37,14 @@ describe("claiming and asking", () => {
     const r = applyChange(t, next(t, { status: "accepted", owner: mia }), person(mia));
     expect(r.ok && r.provenance["activity"]).toBe("claim");
   });
+  it("lets a lead reopen done work, recorded as reopen; not a volunteer", () => {
+    const done = task({ status: "completed", owner: mia, meta: { version: 4 } });
+    expect(applyChange(done, next(done, { status: "ready", owner: { reference: "Team/communications" } }), person(mia)).ok).toBe(false);
+    const r = applyChange(done, next(done, { status: "in-progress" }), person(don, ["task.assign"]));
+    expect(r.ok && r.provenance["activity"]).toBe("reopen");
+    const gone = task({ status: "cancelled" });
+    expect(applyChange(gone, next(gone, { status: "ready" }), person(don, ["task.assign"])).ok).toBe(true);
+  });
   it("refuses claiming on someone else's behalf", () => {
     const t = task();
     expect(applyChange(t, next(t, { status: "accepted", owner: don }), person(mia)).ok).toBe(false);

@@ -11,9 +11,10 @@ export const lifecycles: Record<string, { field: string; graph: Graph }> = {
       accepted: ["in-progress", "completed", "ready", "cancelled", "on-hold"],
       "in-progress": ["completed", "failed", "ready", "on-hold", "cancelled"],
       "on-hold": ["ready", "accepted", "in-progress", "cancelled"],
-      completed: [],
-      failed: [],
-      cancelled: [],
+      // Reopening (BIX Lifecycles, 2026-11-12): needs task.assign; earlier versions and proofs are unchanged.
+      completed: ["ready", "in-progress"],
+      failed: ["ready", "in-progress"],
+      cancelled: ["ready"],
     },
   },
   Need: { field: "status", graph: { draft: ["open", "cancelled"], open: ["partially-met", "met", "cancelled"], "partially-met": ["met", "open", "cancelled"], met: ["partially-met"], cancelled: [] } },

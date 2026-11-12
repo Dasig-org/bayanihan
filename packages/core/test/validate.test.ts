@@ -59,8 +59,10 @@ describe("lifecycles", () => {
   it("lets a declined ask go back to ready", () => {
     expect(canTransition("Task", "requested", "ready")).toBe(true);
   });
-  it("never reopens a completed task", () => {
-    expect(canTransition("Task", "completed", "ready")).toBe(false);
+  it("reopens a completed task only to ready or in-progress (BIX 2026-11-12)", () => {
+    expect(canTransition("Task", "completed", "ready")).toBe(true);
+    expect(canTransition("Task", "completed", "accepted")).toBe(false);
+    expect(canTransition("Task", "cancelled", "in-progress")).toBe(false);
   });
   it("closes a vote before deciding it", () => {
     expect(canTransition("Decision", "open", "decided")).toBe(false);

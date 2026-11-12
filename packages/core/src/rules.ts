@@ -43,6 +43,7 @@ function activity(prev: BixResource | null, next: BixResource): string {
   if (!prev) return isDraft(next) ? "propose" : "create";
   const a = state(prev), b = state(next);
   if (next.resourceType === "Task") {
+    if (["completed", "failed", "cancelled"].includes(String(a)) && (b === "ready" || b === "in-progress")) return "reopen";
     if (a === "ready" && b === "accepted") return "claim";
     if (a === "ready" && b === "requested") return "assign";
     if (a === "requested" && b === "accepted") return "accept";
@@ -120,6 +121,8 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
     if (a === "ready" && b === "accepted" && !same(owner, me) && !shiftFull) reasons.push("you can claim a task only for yourself");
     // Asking someone needs task.assign.
     if (a === "ready" && b === "requested" && !ctx.permissions.includes("task.assign")) reasons.push("asking someone needs task.assign");
+    // Reopening done, failed or cancelled work is a lead's call.
+    if (["completed", "failed", "cancelled"].includes(String(a)) && (b === "ready" || b === "in-progress") && !ctx.permissions.includes("task.assign")) reasons.push("reopening a task needs task.assign");
     // Only the person asked can accept (rule 17).
     if (a === "requested" && b === "accepted" && !same(prev["owner"] as Ref, me)) reasons.push("only the person asked can accept");
     // Confirming: never your own work when money or beneficiaries are involved (rule 5).
