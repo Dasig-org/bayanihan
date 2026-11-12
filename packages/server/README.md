@@ -42,3 +42,20 @@ npm run dev -w @bayanihan/server   # http://localhost:8787
 **Files** are kept by this server, named by their SHA-256 (stored once, however often they're uploaded), on local disk at `BIX_FILES_DIR` (default `packages/server/.data/files`). An S3-compatible store (MinIO for self-hosting) uses the same interface next.
 
 **Not yet:** S3-compatible file store, goal progress, mentions, the hub.
+
+## Push notifications (optional)
+
+A hosted server can tell people when something needs them: a task asked of them, someone asking to join a group or
+team they run, an offer for a need. Messages are short and general ("Humans of Cebu asked you to help"); the detail
+loads when the app opens, so no task text, place or group-only detail passes through a push service. Push targets are
+kept per signed-in device, outside the BIX records: never synced, signed or exported, and removed on sign-out and when
+a person asks to delete their account.
+
+| Setting | What it does |
+|---|---|
+| `BIX_PUSH_VAPID_PUBLIC`, `BIX_PUSH_VAPID_PRIVATE` | Web push (installed web apps and browsers) with your own key pair: `npx web-push generate-vapid-keys` |
+| `BIX_PUSH_SUBJECT` | A contact for push services, e.g. `mailto:you@example.org` |
+| `BIX_PUSH_EXPO=1`, `BIX_PUSH_EXPO_TOKEN` | Send through Expo's push service, for an Expo app you publish (the token is your Expo access token) |
+
+Endpoints: `GET /$push` (what this server can send, and its web key), `POST /$push` with `{kind: "web" | "expo", target}`
+to register this device, or `{off: true}` to stop. A hub on local wifi has no internet, so it doesn't send push.

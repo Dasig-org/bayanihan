@@ -25,6 +25,7 @@ create table if not exists bix_file_groups (hash text not null, org text not nul
 create table if not exists bix_files (hash text primary key, content_type text not null, size integer not null, uploaded_by text not null, shows_minors integer not null);
 create table if not exists bix_file_bytes (hash text primary key, data text not null);
 create table if not exists bix_devices (token_hash text primary key, person_id text not null, created_at text not null);
+create table if not exists bix_push (device text not null, person_id text not null, kind text not null, target text not null, created_at text not null, primary key (device, kind));
 create table if not exists bix_identities (provider text not null, subject text not null, person_id text not null, created_at text not null, primary key (provider, subject));
 `;
 
@@ -149,5 +150,13 @@ export async function sqliteStore(db: Db) {
     async add(hash: string, org: string, size: number) { await db.run("insert or ignore into bix_file_groups values (?, ?, ?)", hash, org, size); },
     async used(org: string) { const r = await db.all<{ n: number | null }>("select sum(size) as n from bix_file_groups where org = ?", org); return Number(r[0]?.n ?? 0); },
   };
-  return { store, keys, sequences, linkTokens, fileMeta, files, devices, identities, groupFiles };
+  /** Where to send push notifications: one target per signed-in device and kind. Not BIX records; never synced. */
+  const pushTargets = {
+    async save(device: string, person: string, kind: "expo" | "web", target: string) { await db.run("insert or replace into bix_push values (?, ?, ?, ?, ?)", device, person, kind, target, now()); },
+    async forPerson(person: string) { return (await db.all<{ device: string; kind: "expo" | "web"; target: string }>("select device, kind, target from bix_push where person_id = ?", person)); },
+    async forgetDevice(device: string) { await db.run("delete from bix_push where device = ?", device); },
+    async forgetPerson(person: string) { await db.run("delete from bix_push where person_id = ?", person); },
+    async forgetTarget(target: string) { await db.run("delete from bix_push where target = ?", target); },
+  };
+  return { store, keys, sequences, linkTokens, fileMeta, files, devices, identities, groupFiles, pushTargets };
 }

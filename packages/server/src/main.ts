@@ -83,6 +83,10 @@ async function options(): Promise<ServerOptions> {
     return {
       ...common, store: s.store, keys: s.keys, sequences: s.sequences, linkTokens: s.linkTokens, files: s.files, devices: s.devices,
       ...(env.GOOGLE_CLIENT_IDS ? { google: { identities: s.identities, verify: await googleVerifier(env.GOOGLE_CLIENT_IDS.split(",").map((x) => x.trim()).filter(Boolean)) } } : {}),
+      // Push: web push with this server's VAPID keys; Expo (Dasig's Android app) when BIX_PUSH_EXPO=1. Keys live in env only.
+      ...(env.BIX_PUSH_VAPID_PUBLIC || env.BIX_PUSH_EXPO === "1" ? { push: { targets: s.pushTargets, webPublicKey: env.BIX_PUSH_VAPID_PUBLIC, send: {
+        ...(env.BIX_PUSH_VAPID_PUBLIC && env.BIX_PUSH_VAPID_PRIVATE ? { web: await (await import("./push.js")).webPushSender({ publicKey: env.BIX_PUSH_VAPID_PUBLIC, privateKey: env.BIX_PUSH_VAPID_PRIVATE, subject: env.BIX_PUSH_SUBJECT ?? "mailto:hello@example.org" }) } : {}),
+        ...(env.BIX_PUSH_EXPO === "1" ? { expo: (await import("./push.js")).expoSender(env.BIX_PUSH_EXPO_TOKEN) } : {}) } } } : {}),
       ...(env.BIX_GROUP_STORAGE_BYTES ? { storage: { perGroupBytes: Number(env.BIX_GROUP_STORAGE_BYTES), groups: s.groupFiles } } : {}),
       ...(env.BIX_OIDC_PROVIDERS ? { oidc: { identities: s.identities, providers: await oidcProviders(env.BIX_OIDC_PROVIDERS) } } : {}),
       ...(env.BIX_OPEN_JOIN === "1" ? { openJoin: { audience: env.BIX_PUBLIC_URL ?? `http://localhost:${port}`, perHour: Number(env.BIX_JOIN_PER_HOUR ?? 10) } } : {}),

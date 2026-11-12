@@ -8,6 +8,7 @@ import { loadDirectory, permissionsForRecord, type Caller } from "./auth.js";
 import { canCreate } from "./create.js";
 import { ALLOWED_TYPES, MAX_FILE_BYTES, type FileStore } from "./files.js";
 import { newToken, hashToken, type LinkTokens } from "./links.js";
+import { dispatch, type Push } from "./push.js";
 
 export type ServerOptions = {
   store: Store & {
@@ -23,6 +24,8 @@ export type ServerOptions = {
   devices?: { save(tokenHash: string, person: string): Promise<void>; personFor(tokenHash: string): Promise<string | null>; forget?(tokenHash: string): Promise<void> };
   /** The pairing code shown on the hub as a QR. Changing it stops new pairings with the old code. */
   pairingCode?: () => string | null;
+  /** Push notifications (src/push.ts): where to send, and the senders this server has keys for. Off when absent. */
+  push?: Push;
   /**
    * Open sign-up for a hosted server (the Dasig Ecosystem): GET /$challenge and POST /$join. A phone joins with a nickname,
    * or brings its Person; a Person with keys must sign the server's one-time challenge. `audience` is this server's public
@@ -67,6 +70,7 @@ export type ServerOptions = {
 
 /** The standard BIX API (spec, "Interoperability"): FHIR-shaped, Core on every write. */
 export function createApp(o: ServerOptions) {
+  const told = (prev: BixResource | null, rec: BixResource, actor: string) => dispatch(o.push, prev, rec, actor, (t, i) => o.store.get(t, i), o.store.search?.bind(o.store));
   const app = new Hono();
   if (o.cors !== false) app.use("*", cors({ origin: o.corsOrigins ?? "*", allowHeaders: ["authorization", "content-type", "x-bix-person", "x-bix-link"], allowMethods: ["GET", "POST", "OPTIONS"] }));
 
@@ -302,6 +306,7 @@ export function createApp(o: ServerOptions) {
         if (r.ok && committed) {
           await o.store.commit(committed, await seal(prev, committed, r.provenance));
           if (!prev && committed.resourceType === "Organization") await founderRole(me, committed);
+          told(prev, committed, me);
         }
         results.push(r.ok ? { ok: true, record: committed } : { ok: false, reasons: r.reasons, current: prev });
       }
@@ -318,7 +323,7 @@ export function createApp(o: ServerOptions) {
         changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: await ctxFor(e.resource) });
       }
       const sealing = { get: (t: string, i: string) => o.store.get(t, i),
-        commit: async (rec: BixResource, prov: BixResource) => { const prev = await o.store.get(rec.resourceType, rec.id); const ref = await reference(prev, rec); await o.store.commit(ref, await seal(prev, ref, prov)); } };
+        commit: async (rec: BixResource, prov: BixResource) => { const prev = await o.store.get(rec.resourceType, rec.id); const ref = await reference(prev, rec); await o.store.commit(ref, await seal(prev, ref, prov)); told(prev, ref, me); } };
       const out = await replay(sealing, changes, o.now());
       return c.json({ resourceType: "Bundle", type: "sync-response", accepted: out.accepted.map((a) => a.record), refused: [...refusedNew, ...out.refused] });
     }
@@ -778,6 +783,7 @@ export function createApp(o: ServerOptions) {
   app.post("/$signout", async (c) => {
     const h = c.req.header("authorization");
     if (h?.startsWith("Bearer ") && o.devices?.forget) await o.devices.forget(await hashToken(h.slice(7)));
+    if (h?.startsWith("Bearer ") && o.push) await o.push.targets.forgetDevice(await hashToken(h.slice(7)));
     return c.json({ signedOut: true });
   });
 
@@ -991,6 +997,23 @@ export function createApp(o: ServerOptions) {
   });
 
   /** Ask to delete your account: after 14 days your profile is removed; groups keep the work, unnamed (spec: Privacy and safety). */
+  /** Push: the web key to subscribe with, register this device, or stop. A device is its sign-in token's hash. */
+  app.get("/$push", (c) => c.json({ web: o.push?.send.web ? o.push.webPublicKey ?? null : null, expo: !!o.push?.send.expo }));
+  app.post("/$push", async (c) => {
+    const me = (await o.identify(c.req.raw)).person; const h = c.req.header("authorization");
+    if (!me || !h?.startsWith("Bearer ")) return c.json({ error: "sign in first" }, 401);
+    if (!o.push) return c.json({ error: "this server doesn't send notifications" }, 404);
+    const b = (await c.req.json().catch(() => ({}))) as { kind?: string; target?: unknown; off?: boolean };
+    const device = await hashToken(h.slice(7));
+    if (b.off) { await o.push.targets.forgetDevice(device); return c.json({ on: false }); }
+    const kind = b.kind === "expo" || b.kind === "web" ? b.kind : null;
+    const target = kind === "expo" && typeof b.target === "string" && /^Expo(nent)?PushToken\[[^\]]{8,200}\]$/.test(b.target) ? b.target
+      : kind === "web" && b.target && typeof (b.target as { endpoint?: unknown }).endpoint === "string" && /^https:\/\//.test((b.target as { endpoint: string }).endpoint) && JSON.stringify(b.target).length < 2000 ? JSON.stringify(b.target) : null;
+    if (!kind || !target || !o.push.send[kind]) return c.json({ error: "not a push target this server can use" }, 400);
+    await o.push.targets.save(device, me, kind, target);
+    return c.json({ on: true });
+  });
+
   app.post("/$me/delete", async (c) => {
     const me = (await o.identify(c.req.raw)).person;
     if (!me) return c.json({ error: "sign in first" }, 401);
@@ -1014,6 +1037,7 @@ export function createApp(o: ServerOptions) {
     const r = applyChange(p, next, { actor: { type: "person", person: { reference: me } }, permissions: [], now: o.now(), newId: o.newId });
     if (!r.ok) return c.json({ error: r.reasons }, 409);
     await o.store.commit(r.record, r.provenance);
+    if (!cancel && o.push) await o.push.targets.forgetPerson(me);
     return c.json({ deleteAfter: cancel ? null : due });
   });
   /** Remove profiles whose grace period has ended. Run on each start of a session. */
