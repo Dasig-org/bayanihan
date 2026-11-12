@@ -25,6 +25,7 @@ create table if not exists bix_file_groups (hash text not null, org text not nul
 create table if not exists bix_files (hash text primary key, content_type text not null, size integer not null, uploaded_by text not null, shows_minors integer not null);
 create table if not exists bix_file_bytes (hash text primary key, data text not null);
 create table if not exists bix_devices (token_hash text primary key, person_id text not null, created_at text not null);
+create table if not exists bix_email_codes (email text primary key, code_hash text not null, expires_at text not null, tries integer not null, sent_at text not null);
 create table if not exists bix_push (device text not null, person_id text not null, kind text not null, target text not null, created_at text not null, primary key (device, kind));
 create table if not exists bix_identities (provider text not null, subject text not null, person_id text not null, created_at text not null, primary key (provider, subject));
 `;
@@ -32,6 +33,9 @@ create table if not exists bix_identities (provider text not null, subject text 
 /** Bayanihan Server's storage on SQLite: the same behaviour as the Postgres store, for a phone or a hub. */
 export async function sqliteStore(db: Db) {
   await db.exec(SCHEMA);
+  // Columns added 2026-11-12 (sign-in methods and devices in Settings). SQLite has no "add column if not exists".
+  for (const sql of ["alter table bix_identities add column label text", "alter table bix_devices add column via text", "alter table bix_devices add column name text"])
+    await db.exec(sql).catch(() => {});
   const now = () => new Date().toISOString();
   const parse = (rows: { resource: string }[]) => rows.map((r) => JSON.parse(r.resource) as BixResource);
 
@@ -113,7 +117,20 @@ export async function sqliteStore(db: Db) {
   };
   /** Phones paired with a hub: a token (only its hash stored) per phone, mapped to its Person. */
   const devices = {
-    async save(tokenHash: string, person: string) { await db.run("insert into bix_devices values (?, ?, ?)", tokenHash, person, now()); },
+    async save(tokenHash: string, person: string, meta: { via?: string; name?: string } = {}) {
+      await db.run("insert into bix_devices (token_hash, person_id, created_at, via, name) values (?, ?, ?, ?, ?)", tokenHash, person, now(), meta.via ?? null, meta.name ?? null);
+    },
+    /** Signed-in phones and browsers for Settings. The id is a short slice of the token's hash, never the token. */
+    async list(person: string) {
+      return (await db.all<{ token_hash: string; created_at: string; via: string | null; name: string | null }>("select token_hash, created_at, via, name from bix_devices where person_id = ? order by created_at desc", person))
+        .map((r) => ({ id: r.token_hash.slice(0, 16), created: r.created_at, via: r.via, name: r.name, hash: r.token_hash }));
+    },
+    async forgetId(person: string, id: string) {
+      const r = await db.all<{ token_hash: string }>("select token_hash from bix_devices where person_id = ? and substr(token_hash, 1, 16) = ?", person, id);
+      for (const x of r) await db.run("delete from bix_devices where token_hash = ?", x.token_hash);
+      return r.map((x) => x.token_hash);
+    },
+    async viaFor(tokenHash: string) { return (await db.all<{ via: string | null }>("select via from bix_devices where token_hash = ?", tokenHash))[0]?.via ?? null; },
     async forget(tokenHash: string) { await db.run("delete from bix_devices where token_hash = ?", tokenHash); },
     /** A token older than maxAgeMs no longer works (hosted servers renew them with the phone's key; hubs keep them). */
     async personFor(tokenHash: string, maxAgeMs?: number) {
@@ -143,7 +160,11 @@ export async function sqliteStore(db: Db) {
   /** Outside sign-ins linked to a Person (e.g. Google), for getting back in on a new phone. */
   const identities = {
     async personFor(provider: string, subject: string) { const r = await db.all<{ person_id: string }>("select person_id from bix_identities where provider = ? and subject = ?", provider, subject); return r[0]?.person_id ?? null; },
-    async link(provider: string, subject: string, person: string) { await db.run("insert or replace into bix_identities values (?, ?, ?, ?)", provider, subject, person, now()); },
+    async link(provider: string, subject: string, person: string, label?: string) { await db.run("insert or replace into bix_identities (provider, subject, person_id, created_at, label) values (?, ?, ?, ?, ?)", provider, subject, person, now(), label ?? null); },
+    /** Refresh the email shown for a method (it can change at Google), without moving it. */
+    async relabel(provider: string, subject: string, label: string) { await db.run("update bix_identities set label = ? where provider = ? and subject = ?", label, provider, subject); },
+    async list(person: string) { return db.all<{ provider: string; subject: string; label: string | null; created_at: string }>("select provider, subject, label, created_at from bix_identities where person_id = ? order by created_at", person); },
+    async unlink(provider: string, subject: string, person: string) { await db.run("delete from bix_identities where provider = ? and subject = ? and person_id = ?", provider, subject, person); },
   };
   /** Which group's storage each file counts against (a file shared by two groups counts once in each). */
   const groupFiles = {
@@ -158,5 +179,12 @@ export async function sqliteStore(db: Db) {
     async forgetPerson(person: string) { await db.run("delete from bix_push where person_id = ?", person); },
     async forgetTarget(target: string) { await db.run("delete from bix_push where target = ?", target); },
   };
-  return { store, keys, sequences, linkTokens, fileMeta, files, devices, identities, groupFiles, pushTargets };
+  /** Email sign-in codes: only a hash is kept, with an expiry and a count of wrong tries. */
+  const emailCodes = {
+    async save(email: string, codeHash: string, expiresAt: string) { await db.run("insert or replace into bix_email_codes values (?, ?, ?, 0, ?)", email, codeHash, expiresAt, now()); },
+    async get(email: string) { const r = await db.all<{ code_hash: string; expires_at: string; tries: number; sent_at: string }>("select * from bix_email_codes where email = ?", email); return r[0] ? { codeHash: r[0].code_hash, expiresAt: r[0].expires_at, tries: r[0].tries, sentAt: r[0].sent_at } : null; },
+    async tried(email: string) { await db.run("update bix_email_codes set tries = tries + 1 where email = ?", email); },
+    async clear(email: string) { await db.run("delete from bix_email_codes where email = ?", email); },
+  };
+  return { store, keys, sequences, linkTokens, fileMeta, files, devices, identities, groupFiles, pushTargets, emailCodes };
 }

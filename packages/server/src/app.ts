@@ -10,6 +10,10 @@ import { ALLOWED_TYPES, MAX_FILE_BYTES, type FileStore } from "./files.js";
 import { newToken, hashToken, type LinkTokens } from "./links.js";
 import { dispatch, type Push } from "./push.js";
 
+/** Ways to sign in linked to a Person (Google, Dasig.org, email…): (provider, subject) → Person, with the email shown in Settings. */
+export type Identities = { personFor(provider: string, subject: string): Promise<string | null>; link(provider: string, subject: string, person: string, label?: string): Promise<void>;
+  relabel?(provider: string, subject: string, label: string): Promise<void>; list?(person: string): Promise<{ provider: string; subject: string; label: string | null; created_at: string }[]>; unlink?(provider: string, subject: string, person: string): Promise<void> };
+
 export type ServerOptions = {
   store: Store & {
     search?(type: string, params: Record<string, string>): Promise<BixResource[]>;
@@ -21,7 +25,13 @@ export type ServerOptions = {
   /** Secret halves of ShareLinks. Without it, links can't be created. */
   linkTokens?: LinkTokens;
   /** Phones paired with this hub. With it, POST /$pair is available. */
-  devices?: { save(tokenHash: string, person: string): Promise<void>; personFor(tokenHash: string): Promise<string | null>; forget?(tokenHash: string): Promise<void> };
+  devices?: { save(tokenHash: string, person: string, meta?: { via?: string; name?: string }): Promise<void>; personFor(tokenHash: string): Promise<string | null>; forget?(tokenHash: string): Promise<void>;
+    list?(person: string): Promise<{ id: string; created: string; via: string | null; name: string | null; hash: string }[]>; forgetId?(person: string, id: string): Promise<string[]>; viaFor?(tokenHash: string): Promise<string | null> };
+  /**
+   * Email sign-in with a one-time code (POST /$email/start, /$email/verify). `send` delivers the code (SES on a hosted
+   * server, see email-senders.ts); codes are kept only as hashes, for 10 minutes, with five tries.
+   */
+  email?: { send(to: string, code: string): Promise<void>; codes: { save(email: string, codeHash: string, expiresAt: string): Promise<void>; get(email: string): Promise<{ codeHash: string; expiresAt: string; tries: number; sentAt: string } | null>; tried(email: string): Promise<void>; clear(email: string): Promise<void> }; identities: Identities };
   /** The pairing code shown on the hub as a QR. Changing it stops new pairings with the old code. */
   pairingCode?: () => string | null;
   /** Push notifications (src/push.ts): where to send, and the senders this server has keys for. Off when absent. */
@@ -36,13 +46,13 @@ export type ServerOptions = {
    * Google sign-in (POST /$google): a way back in on a new phone. `verify` checks a Google ID token and returns its
    * stable subject; `identities` links that subject to a Person. The server never sees a password.
    */
-  google?: { verify(idToken: string): Promise<{ sub: string; email?: string } | null>; identities: { personFor(provider: string, subject: string): Promise<string | null>; link(provider: string, subject: string, person: string): Promise<void> } };
+  google?: { verify(idToken: string): Promise<{ sub: string; email?: string } | null>; identities: Identities };
   /**
    * OpenID Connect providers this server accepts sign-ins from, by name, e.g. "dasig" (a dasig.org account via
    * Supabase's OAuth 2.1 server). `verify` checks an ID token issued for this server's client IDs. The server stores
    * only the link (provider, subject) → Person. Docs: docs/auth/DASIG_ACCOUNTS.md.
    */
-  oidc?: { providers: Record<string, { verify(idToken: string): Promise<{ sub: string; name?: string } | null> }>; identities: { personFor(provider: string, subject: string): Promise<string | null>; link(provider: string, subject: string, person: string): Promise<void> } };
+  oidc?: { providers: Record<string, { verify(idToken: string): Promise<{ sub: string; name?: string; email?: string } | null> }>; identities: Identities };
   /**
    * Optional storage allowance per group, set by whoever hosts this server (e.g. BIX_GROUP_STORAGE_BYTES). Without it,
    * there's no limit. Uploads with ?org= count against that group; at the limit new uploads are refused, nothing else is.
@@ -70,6 +80,7 @@ export type ServerOptions = {
 
 /** The standard BIX API (spec, "Interoperability"): FHIR-shaped, Core on every write. */
 export function createApp(o: ServerOptions) {
+  const emailHits = new Map<string, number[]>();
   const told = (prev: BixResource | null, rec: BixResource, actor: string) => dispatch(o.push, prev, rec, actor, (t, i) => o.store.get(t, i), o.store.search?.bind(o.store));
   const app = new Hono();
   if (o.cors !== false) app.use("*", cors({ origin: o.corsOrigins ?? "*", allowHeaders: ["authorization", "content-type", "x-bix-person", "x-bix-link"], allowMethods: ["GET", "POST", "OPTIONS"] }));
@@ -710,7 +721,7 @@ export function createApp(o: ServerOptions) {
       person = r.record;
     }
     const token = newToken();
-    await o.devices.save(await hashToken(token), `Person/${person.id}`);
+    await o.devices.save(await hashToken(token), `Person/${person.id}`, { via: "nickname", name: deviceName(c, (body as { deviceName?: string }).deviceName) });
     return c.json({ person, token }, 201);
   });
 
@@ -719,14 +730,32 @@ export function createApp(o: ServerOptions) {
    * challenge, that key is added to the person (a new or wiped phone). New Google account: linked to the caller if they
    * are signed in, otherwise to a new Person (brought by the phone, with proof of its key).
    */
-  type Ids = { personFor(provider: string, subject: string): Promise<string | null>; link(provider: string, subject: string, person: string): Promise<void> };
-  type SignInBody = { idToken?: string; person?: BixResource; challenge?: string; proof?: string };
+  type Ids = Identities;
+  type SignInBody = { idToken?: string; person?: BixResource; challenge?: string; proof?: string; link?: boolean; deviceName?: string };
+  /** A readable name for a phone or browser: what the app says, or a guess from the browser's own description. */
+  const deviceName = (c: Context, said?: string) => {
+    if (typeof said === "string" && said.trim()) return said.trim().slice(0, 60);
+    const ua = c.req.header("user-agent") ?? "";
+    const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "A browser";
+    const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Mac OS X/.test(ua) ? "a Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "";
+    return os ? `${browser} on ${os}` : browser;
+  };
   /**
    * Sign in with an outside account (Google, or an OIDC provider such as a Dasig account). A linked account brings its
    * person back; signed in already, it links to you; a phone that proves its key keeps its person; otherwise a new one.
    */
   async function signInWith(c: Context, provider: string, ids: Ids, g: { sub: string; email?: string; name?: string }, body: SignInBody) {
     const now = Date.now();
+    // Adding a way to sign in happens only while signed in, and never moves a method that belongs to someone else.
+    if (body.link) {
+      const me = (await o.identify(c.req.raw)).person;
+      if (!me) return c.json({ error: "sign in first, then add another way" }, 401);
+      const owner = await ids.personFor(provider, g.sub);
+      if (owner && owner !== me) return c.json({ error: "that sign-in already belongs to another Bayanihan Network account" }, 409);
+      if (!owner) await ids.link(provider, g.sub, me, g.email);
+      else if (g.email && ids.relabel) await ids.relabel(provider, g.sub, g.email);
+      return c.json({ linked: true, provider }, 200);
+    }
     const brought = body.person?.resourceType === "Person" ? body.person : null;
     const broughtKeys = ((brought?.["publicKey"] as { key: string; status: string; kid: string; alg: string }[] | undefined) ?? []).filter((k) => k.status === "active");
     const proven = () => {
@@ -750,8 +779,8 @@ export function createApp(o: ServerOptions) {
         await o.store.commit(r.record, r.provenance);
         personRef = `Person/${p.id}`;
       }
-      await ids.link(provider, g.sub, personRef);
-    }
+      await ids.link(provider, g.sub, personRef, g.email);
+    } else if (g.email && ids.relabel) await ids.relabel(provider, g.sub, g.email);
     // Recovery: Google vouches for the person, the phone proves its new key; the key joins the person's record.
     let person = await o.store.get("Person", personRef.split("/")[1]!);
     if (!person) return c.json({ error: "not found" }, 404);
@@ -766,8 +795,8 @@ export function createApp(o: ServerOptions) {
       }
     }
     const token = newToken();
-    await o.devices!.save(await hashToken(token), `Person/${person.id}`);
-    return c.json({ person, token, linked: true }, 200);
+    await o.devices!.save(await hashToken(token), `Person/${person.id}`, { via: provider, name: deviceName(c, body.deviceName) });
+    return c.json({ person, token, linked: true, via: provider }, 200);
     }
 
   app.post("/$google", async (c) => {
@@ -780,6 +809,74 @@ export function createApp(o: ServerOptions) {
 
   /** Sign in with an OpenID Connect provider this server trusts, e.g. `{ provider: "dasig", idToken }`. */
   /** Sign out: this device's token stops working on the server, not only in the app. */
+  /** Email sign-in, step 1: send a 6-digit code. Same answer whether or not the email has an account. */
+  app.post("/$email/start", async (c) => {
+    if (!o.email || !o.devices || !o.openJoin) return c.json({ error: "email sign-in isn't set up on this server" }, 404);
+    const b = (await c.req.json().catch(() => ({}))) as { email?: string };
+    const email = String(b.email ?? "").trim().toLowerCase();
+    if (!/^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/.test(email)) return c.json({ error: "that doesn't look like an email address" }, 400);
+    const prev = await o.email.codes.get(email);
+    if (prev && Date.now() - Date.parse(prev.sentAt) < 30_000) return c.json({ error: "a code was just sent; wait a moment before asking again" }, 429);
+    const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    const hits = (emailHits.get(ip) ?? []).filter((t) => Date.now() - t < 3600_000);
+    if (hits.length >= 10) return c.json({ error: "too many codes from here; try again in an hour" }, 429);
+    emailHits.set(ip, [...hits, Date.now()]);
+    const n = new Uint32Array(1); crypto.getRandomValues(n);
+    const code = String(n[0]! % 1_000_000).padStart(6, "0");
+    await o.email.codes.save(email, await hashToken(`${email}:${code}`), new Date(Date.now() + 10 * 60_000).toISOString());
+    try { await o.email.send(email, code); } catch { await o.email.codes.clear(email); return c.json({ error: "we couldn't send the email; try again" }, 502); }
+    return c.json({ sent: true });
+  });
+  /** Email sign-in, step 2: the code signs you in (or links email while signed in, with link: true). */
+  app.post("/$email/verify", async (c) => {
+    if (!o.email || !o.devices || !o.openJoin) return c.json({ error: "email sign-in isn't set up on this server" }, 404);
+    const b = (await c.req.json().catch(() => ({}))) as SignInBody & { email?: string; code?: string };
+    const email = String(b.email ?? "").trim().toLowerCase(); const code = String(b.code ?? "").replace(/\D/g, "");
+    const rec = await o.email.codes.get(email);
+    if (!rec || Date.parse(rec.expiresAt) < Date.now() || rec.tries >= 5) return c.json({ error: "that code has expired; ask for a new one" }, 401);
+    if ((await hashToken(`${email}:${code}`)) !== rec.codeHash) { await o.email.codes.tried(email); return c.json({ error: "that code isn't right; check the email and try again" }, 401); }
+    await o.email.codes.clear(email);
+    return signInWith(c, "email", o.email.identities, { sub: email, email }, b);
+  });
+  /** Settings → Your account: the ways to sign in, the phones and browsers signed in, and removing either. */
+  const accountIds = () => o.email?.identities ?? o.oidc?.identities ?? o.google?.identities;
+  app.get("/$me/account", async (c) => {
+    const me = (await o.identify(c.req.raw)).person; const h = c.req.header("authorization");
+    if (!me || !h?.startsWith("Bearer ")) return c.json({ error: "sign in first" }, 401);
+    const here = await hashToken(h.slice(7));
+    const ids = accountIds();
+    const methods = ids?.list ? await ids.list(me) : [];
+    const devices = o.devices?.list ? await o.devices.list(me) : [];
+    return c.json({
+      methods: methods.map((m) => ({ provider: m.provider, subject: m.provider === "email" ? m.subject : undefined, email: m.label ?? (m.provider === "email" ? m.subject : null), since: m.created_at })),
+      devices: devices.map((d) => ({ id: d.id, name: d.name, via: d.via, since: d.created, current: d.hash === here })),
+      via: o.devices?.viaFor ? await o.devices.viaFor(here) : null,
+      can: { google: !!o.google, email: !!o.email, ...Object.fromEntries(Object.keys(o.oidc?.providers ?? {}).map((k) => [k, true])) },
+    });
+  });
+  app.post("/$me/account/remove", async (c) => {
+    const me = (await o.identify(c.req.raw)).person; const h = c.req.header("authorization");
+    if (!me || !h?.startsWith("Bearer ")) return c.json({ error: "sign in first" }, 401);
+    const b = (await c.req.json().catch(() => ({}))) as { provider?: string; subject?: string; device?: string };
+    if (b.device) {
+      const here = (await hashToken(h.slice(7))).slice(0, 16);
+      if (b.device === here) return c.json({ error: "use Sign out for this phone" }, 409);
+      const gone = o.devices?.forgetId ? await o.devices.forgetId(me, b.device) : [];
+      for (const g of gone) if (o.push) await o.push.targets.forgetDevice(g);
+      return c.json({ removed: gone.length });
+    }
+    const ids = accountIds();
+    if (!ids?.list || !ids.unlink || !b.provider) return c.json({ error: "nothing to remove" }, 400);
+    const all = await ids.list(me);
+    const m = all.find((x) => x.provider === b.provider && (b.subject ? x.subject === b.subject : true));
+    if (!m) return c.json({ error: "that isn't one of your ways to sign in" }, 404);
+    if (all.length <= 1) return c.json({ error: "this is your only way to sign in; add another first" }, 409);
+    const via = o.devices?.viaFor ? await o.devices.viaFor(await hashToken(h.slice(7))) : null;
+    if (via === m.provider && all.filter((x) => x.provider === m.provider).length === 1) return c.json({ error: "this phone is signed in with it; remove it from another phone or browser" }, 409);
+    await ids.unlink(m.provider, m.subject, me);
+    return c.json({ removed: 1 });
+  });
+
   app.post("/$signout", async (c) => {
     const h = c.req.header("authorization");
     if (h?.startsWith("Bearer ") && o.devices?.forget) await o.devices.forget(await hashToken(h.slice(7)));
@@ -855,7 +952,7 @@ export function createApp(o: ServerOptions) {
       person = r.record;
     }
     const token = newToken();
-    await o.devices.save(await hashToken(token), `Person/${person.id}`);
+    await o.devices.save(await hashToken(token), `Person/${person.id}`, { via: "hub", name: deviceName(c) });
     return c.json({ person, token }, 201);
   });
 

@@ -43,7 +43,7 @@ async function googleVerifier(audience: string[]) {
  */
 async function oidcProviders(spec: string) {
   const { createRemoteJWKSet, jwtVerify } = await import("jose");
-  const out: Record<string, { verify(t: string): Promise<{ sub: string; name?: string } | null> }> = {};
+  const out: Record<string, { verify(t: string): Promise<{ sub: string; name?: string; email?: string } | null> }> = {};
   for (const entry of spec.split(";").map((x) => x.trim()).filter(Boolean)) {
     const [name, issuer, ids] = entry.split("|");
     if (!name || !issuer || !ids) throw new Error(`BIX_OIDC_PROVIDERS: "${entry}" needs name|issuer|clientIds`);
@@ -54,7 +54,8 @@ async function oidcProviders(spec: string) {
       const { payload } = await jwtVerify(t, jwks, { issuer, audience });
       if (!payload.sub) return null;
       const n = payload["name"] ?? payload["given_name"] ?? (payload["user_metadata"] as { full_name?: string } | undefined)?.full_name;
-      return { sub: String(payload.sub), ...(n ? { name: String(n) } : {}) };
+      const email = payload["email"] && payload["email_verified"] !== false ? String(payload["email"]) : undefined;  // shown in Settings
+      return { sub: String(payload.sub), ...(n ? { name: String(n) } : {}), ...(email ? { email } : {}) };
     } };
   }
   return out;
@@ -87,6 +88,9 @@ async function options(): Promise<ServerOptions> {
       ...(env.BIX_PUSH_VAPID_PUBLIC || env.BIX_PUSH_EXPO === "1" ? { push: { targets: s.pushTargets, webPublicKey: env.BIX_PUSH_VAPID_PUBLIC, send: {
         ...(env.BIX_PUSH_VAPID_PUBLIC && env.BIX_PUSH_VAPID_PRIVATE ? { web: await (await import("./push-senders.js")).webPushSender({ publicKey: env.BIX_PUSH_VAPID_PUBLIC, privateKey: env.BIX_PUSH_VAPID_PRIVATE, subject: env.BIX_PUSH_SUBJECT ?? "mailto:hello@example.org" }) } : {}),
         ...(env.BIX_PUSH_EXPO === "1" ? { expo: (await import("./push-senders.js")).expoSender(env.BIX_PUSH_EXPO_TOKEN) } : {}) } } } : {}),
+      // Email sign-in codes through SES: BIX_EMAIL_FROM (a verified sender), BIX_EMAIL_SES_* credentials of their own.
+      ...(env.BIX_EMAIL_FROM ? { email: { identities: s.identities, codes: s.emailCodes, send: await (await import("./email-senders.js")).sesSender({ region: env.BIX_EMAIL_SES_REGION ?? env.AWS_REGION ?? "ap-southeast-1", from: env.BIX_EMAIL_FROM, network: env.BIX_NETWORK_NAME,
+        ...(env.BIX_EMAIL_SES_ACCESS_KEY_ID && env.BIX_EMAIL_SES_SECRET_ACCESS_KEY ? { credentials: { accessKeyId: env.BIX_EMAIL_SES_ACCESS_KEY_ID, secretAccessKey: env.BIX_EMAIL_SES_SECRET_ACCESS_KEY } } : {}) }) } } : {}),
       ...(env.BIX_GROUP_STORAGE_BYTES ? { storage: { perGroupBytes: Number(env.BIX_GROUP_STORAGE_BYTES), groups: s.groupFiles } } : {}),
       ...(env.BIX_OIDC_PROVIDERS ? { oidc: { identities: s.identities, providers: await oidcProviders(env.BIX_OIDC_PROVIDERS) } } : {}),
       ...(env.BIX_OPEN_JOIN === "1" ? { openJoin: { audience: env.BIX_PUBLIC_URL ?? `http://localhost:${port}`, perHour: Number(env.BIX_JOIN_PER_HOUR ?? 10) } } : {}),

@@ -59,3 +59,21 @@ a person asks to delete their account.
 
 Endpoints: `GET /$push` (what this server can send, and its web key), `POST /$push` with `{kind: "web" | "expo", target}`
 to register this device, or `{off: true}` to stop. A hub on local wifi has no internet, so it doesn't send push.
+
+## Sign-in methods and email codes
+
+A Person on a hosted server can have several ways to sign in: Google, an OIDC provider (for example Dasig.org), and
+email with a one-time code. Each is a (provider, subject) pair linked to the Person, with the email shown in Settings.
+A method is added only while signed in (`link: true`), so accounts are never joined because an email matches.
+
+| Setting | What it does |
+|---|---|
+| `BIX_EMAIL_FROM` | Turns on email codes; the verified sender, e.g. `Bayanihan Network <signin@example.org>` |
+| `BIX_EMAIL_SES_REGION`, `BIX_EMAIL_SES_ACCESS_KEY_ID`, `BIX_EMAIL_SES_SECRET_ACCESS_KEY` | Amazon SES, with credentials of their own |
+| `BIX_NETWORK_NAME` | The name used in the email, e.g. `the Bayanihan Network` |
+
+Endpoints: `POST /$email/start {email}` sends a 6-digit code (10 minutes, five tries, one per 30 seconds, ten per hour
+from one address); `POST /$email/verify {email, code}` signs in or makes the account. `GET /$me/account` lists ways to
+sign in (with their email), the phones and browsers signed in, and which method this one used; `POST
+/$me/account/remove` removes a method (never the last one, nor the one this phone signed in with) or signs another
+phone or browser out (`{device}`).
