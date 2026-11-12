@@ -766,6 +766,7 @@ export function createApp(o: ServerOptions) {
     const keyOk = brought && broughtKeys.length ? proven() : false;
     let personRef = await ids.personFor(provider, g.sub);
     const caller = (await o.identify(c.req.raw)).person;
+    let created = false;
     if (!personRef) {
       if (caller) personRef = caller;
       else {
@@ -778,6 +779,7 @@ export function createApp(o: ServerOptions) {
         if (!r.ok) return c.json({ error: r.reasons }, 400);
         await o.store.commit(r.record, r.provenance);
         personRef = `Person/${p.id}`;
+        created = !brought;
       }
       await ids.link(provider, g.sub, personRef, g.email);
     } else if (g.email && ids.relabel) await ids.relabel(provider, g.sub, g.email);
@@ -796,7 +798,7 @@ export function createApp(o: ServerOptions) {
     }
     const token = newToken();
     await o.devices!.save(await hashToken(token), `Person/${person.id}`, { via: provider, name: deviceName(c, body.deviceName) });
-    return c.json({ person, token, linked: true, via: provider }, 200);
+    return c.json({ person, token, linked: true, via: provider, created }, 200);
     }
 
   app.post("/$google", async (c) => {

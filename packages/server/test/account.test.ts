@@ -34,9 +34,11 @@ describe("email code sign-in", () => {
     const { byEmail } = await hosted();
     const first = await byEmail("Don@Example.org");
     expect(first.status).toBe(200);
+    expect(first.json.created).toBe(true);
     const again = await byEmail("don@example.org");
     expect(again.json.person.id).toBe(first.json.person.id);
     expect(again.json.via).toBe("email");
+    expect(again.json.created).toBe(false);
   });
   it("refuses a wrong code, and a code after five wrong tries", async () => {
     const { call, mail } = await hosted();
