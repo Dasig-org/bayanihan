@@ -1174,7 +1174,8 @@ export function createApp(o: ServerOptions) {
     const inis = await o.store.search?.("Initiative", { organization: org }) ?? [];
     const tasks = (await Promise.all(inis.map((i) => o.store.search?.("Task", { partOf: `Initiative/${i.id}` }) ?? []))).flat();
     const provs = (await Promise.all([...inis, ...tasks].slice(0, 400).map((r) => o.store.provenanceFor?.(`${r.resourceType}/${r.id}`) ?? []))).flat();
-    return c.json({ days, byQuestion: suggestionStats(provs, proposals, since, ["0.0-placeholder"]) });
+    const unique = [...new Map(provs.map((x) => [x.id, x])).values()];  // a Provenance can be found through more than one record
+    return c.json({ days, byQuestion: suggestionStats(unique, proposals, since, ["0.0-placeholder"]) });
   });
 
   app.post("/$me/delete", async (c) => {

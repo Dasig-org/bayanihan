@@ -43,6 +43,7 @@
     ".": "./src/index.ts",
     "./figures": "./src/figures.ts",
     "./sign": "./src/sign.ts",
+    "./memory": "./src/memory.ts",
     "./package.json": "./package.json"
   }
 }
