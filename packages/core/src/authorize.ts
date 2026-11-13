@@ -111,6 +111,8 @@ function seesWithinGroup(person: string, record: BixResource, owner: ReturnType<
   if (record.resourceType === "Task" && ["organization", "open"].includes(String(record["audience"]))) return true;
   const inProject = !!owner.initiative && dir.teams.some((t) => ref(t["initiative"]) === owner.initiative && onTeam(t, person));
   if (record.resourceType === "Initiative") return inProject || perms.has("core-team");
+  // The other teams in a project you're on (the Team record, never its Tasks), so you can ask to join (BIX 2026-11-13).
+  if (record.resourceType === "Team") return inProject && record["visibility"] !== "team";
   if (!perms.has("core-team")) return false;
   if (team?.["visibility"] === "team") return false;
   return inProject;

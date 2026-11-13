@@ -27,6 +27,13 @@ describe("core team and volunteers (Role.code)", () => {
 });
 
 describe("seeing other committees' work", () => {
+  it("a volunteer sees the other teams of a project they're on (to ask to join), not their work, nor a private team (2026-11-13)", () => {
+    const hidden = team("money", run, [], { visibility: "team" });
+    const d = dir([route, comms, hidden]);
+    expect(sees("vic", { ...comms, sharing: "organization" }, d)).toBe(true);
+    expect(sees("vic", { ...hidden, sharing: "organization" }, d)).toBe(false);
+    expect(sees("vic", { ...task("comms"), sharing: "organization" }, d)).toBe(false);
+  });
   const d = dir([route, comms]);
   it("officers and core members see every committee", () => {
     expect(sees("ana", task("comms"), d)).toBe(true);
@@ -45,10 +52,10 @@ describe("seeing other committees' work", () => {
     expect(sees("mel", task("comms"), d2)).toBe(false);
     expect(sees("cora", task("comms"), d2)).toBe(true);
   });
-  it("a volunteer sees their own committee and not the others", () => {
+  it("a volunteer sees their own committee's work and not the others' (the other team's record itself is visible since 2026-11-13)", () => {
     expect(sees("vic", task("route"), d)).toBe(true);
     expect(sees("vic", task("comms"), d)).toBe(false);
-    expect(sees("vic", comms, d)).toBe(false);
+    expect(sees("vic", comms, d)).toBe(true);
   });
   it("a volunteer sees the project they're on, but not one they aren't", () => {
     expect(sees("vic", { resourceType: "Initiative", id: "run", meta: m, organization: R(org) }, d)).toBe(true);
