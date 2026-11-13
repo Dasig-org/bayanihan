@@ -30,6 +30,10 @@ export function canCreate(me: string, r: BixResource, dir: Directory): string | 
       return perms.has("task.assign") || perms.has("initiative.plan") ? null : "join the team to suggest work; leads add it directly";
     }
     case "Communication": return ref(r["sender"]) === me ? null : "you can only send as yourself";
+    // BIX "Suggestions and their answers": anyone in the group may record "Not this time" (declined) or propose (draft).
+    case "ChangeProposal":
+      if ((r["area"] as { code?: string } | undefined)?.code !== "memory" || !["declined", "draft"].includes(String(r["status"]))) return "only memory suggestions can be saved this way";
+      return dir.roles.some((x) => ref(x["person"]) === me && x["status"] === "active" && ref(x["organization"]) === ref(r["organization"])) ? null : "only people in the group can answer its suggestions";
     case "Vote": return ref(r["voter"]) === me ? null : "you can only vote as yourself";
     case "Follow": return ref(r["follower"]) === me ? null : "you can only follow as yourself";
     case "Consent": return ref(r["person"]) === me ? null : "only you can give your consent";

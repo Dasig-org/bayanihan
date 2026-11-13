@@ -2,6 +2,9 @@ import { validate, type BixResource } from "./validate.js";
 import { canTransition, lifecycles } from "./lifecycle.js";
 
 export type Ref = { reference: string };
+export type AssistedBy =
+  | { type: "model"; model: { name: string; version: string; question?: string; confidence?: number; edited?: boolean } }
+  | { type: "rule"; rule: string };
 export type Actor =
   | { type: "person"; person: Ref }
   | { type: "model"; model: { name: string; version: string }; onBehalfOf: Ref }
@@ -13,6 +16,8 @@ export type Context = {
   permissions: string[];
   now: string;
   offline?: boolean;
+  /** BIX "Suggestions and their answers": what suggested this change, when a person accepts a suggestion. */
+  assistedBy?: AssistedBy;
   /** For Tasks: does this step involve money or beneficiaries? (from its TaskDefinition) */
   involvesMoneyOrBeneficiaries?: boolean;
   /** For Tasks: does this kind of work need review? (TaskDefinition.review or Task.reviewer) */
@@ -200,7 +205,8 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
   record = { ...record, meta: { ...record.meta, lastUpdated: ctx.now } } as BixResource;
 
   const agent =
-    ctx.actor.type === "person" ? [{ type: "author", who: ctx.actor.person }]
+    ctx.actor.type === "person" ? [{ type: "author", who: ctx.actor.person },
+      ...(ctx.assistedBy?.type === "model" ? [{ type: "model", model: ctx.assistedBy.model, onBehalfOf: ctx.actor.person }] : ctx.assistedBy?.type === "rule" ? [{ type: "rule", rule: ctx.assistedBy.rule }] : [])]
     : ctx.actor.type === "model" ? [{ type: "model", model: ctx.actor.model }, { type: "author", who: ctx.actor.onBehalfOf }]
     : [{ type: "rule" }];
   const provenance: BixResource = {

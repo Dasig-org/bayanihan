@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
-import { applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, verifyChallenge, countVotes, type Store, type BixResource, type Signature } from "@bayanihan/core";
+import { suggestionStats, applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, verifyChallenge, countVotes, type Store, type BixResource, type Signature } from "@bayanihan/core";
 import { frontPage } from "./front-page.js";
 import type { KeyStore } from "./keys.js";
 import { prefixFor, withRef, REF_SYSTEM, type Sequences } from "./refs.js";
@@ -330,12 +330,22 @@ export function createApp(o: ServerOptions) {
   app.post("/", async (c) => {
     const me = (await o.identify(c.req.raw)).person;
     if (!me) return c.json({ error: "sign in, or use a link" }, 401);
+    // BIX "Suggestions and their answers": an entry may say what suggested it (checked here; Core writes the Provenance).
+    const QUESTIONS = ["applies", "which-practice", "which-team", "one-off", "general-title", "usually-needed", "done-by-now", "out-of-order"];
+    const assisted = (x: unknown) => {
+      const a = x as { type?: string; model?: { name?: unknown; version?: unknown; question?: unknown; confidence?: unknown; edited?: unknown }; rule?: unknown } | undefined;
+      if (a?.type === "rule" && typeof a.rule === "string" && a.rule.length < 60) return { type: "rule" as const, rule: a.rule };
+      const m = a?.model;
+      if (a?.type !== "model" || !m || typeof m.name !== "string" || typeof m.version !== "string" || m.name.length > 60 || m.version.length > 30) return undefined;
+      return { type: "model" as const, model: { name: m.name, version: m.version, ...(QUESTIONS.includes(String(m.question)) ? { question: String(m.question) } : {}),
+        ...(typeof m.confidence === "number" && m.confidence >= 0 && m.confidence <= 1 ? { confidence: m.confidence } : {}), ...(m.edited === true ? { edited: true } : {}) } };
+    };
     const ctxFor = async (r: BixResource) => {
       const prev = await o.store.get(r.resourceType, r.id);
       const dir = await loadDirectory(o.store, me, prev ?? r);
       return { actor: { type: "person" as const, person: { reference: me } }, permissions: permissionsForRecord(me, prev ?? r, dir), newId: o.newId };
     };
-    const bundle = (await c.req.json()) as { type?: string; entry?: { resource: BixResource; occurredAt?: string }[] };
+    const bundle = (await c.req.json()) as { type?: string; entry?: { resource: BixResource; occurredAt?: string; assistedBy?: unknown }[] };
     const entries = bundle.entry ?? [];
     if (bundle.type === "transaction") {
       const results = [];
@@ -344,7 +354,8 @@ export function createApp(o: ServerOptions) {
         if (isReplay(prev, e.resource)) { results.push({ ok: true, record: prev }); continue; }
         const why = (prev ? await canUpdate(me, prev, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource))) ?? (await privacyWhy(e.resource));
         if (why) { results.push({ ok: false, reasons: [why], current: prev }); continue; }
-        const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now() });
+        const ab = assisted(e.assistedBy);
+        const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now(), ...(ab ? { assistedBy: ab } : {}) });
         let committed = r.ok ? await recount(await reference(prev, r.record)) : null;
         if (r.ok && committed) {
           await o.store.commit(committed, await seal(prev, committed, r.provenance));
@@ -363,7 +374,8 @@ export function createApp(o: ServerOptions) {
         if (isReplay(prevRec, e.resource)) continue;
         const why = (prevRec ? await canUpdate(me, prevRec, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource))) ?? (await privacyWhy(e.resource));
         if (why) { refusedNew.push({ record: e.resource, reasons: [why], current: prevRec }); continue; }
-        changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: await ctxFor(e.resource) });
+        const ab = assisted(e.assistedBy);
+        changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: { ...(await ctxFor(e.resource)), ...(ab ? { assistedBy: ab } : {}) } });
       }
       const sealing = { get: (t: string, i: string) => o.store.get(t, i),
         commit: async (rec: BixResource, prov: BixResource) => { const prev = await o.store.get(rec.resourceType, rec.id); const ref = await reference(prev, rec); await o.store.commit(ref, await seal(prev, ref, prov)); told(prev, ref, me); } };
@@ -1148,6 +1160,21 @@ export function createApp(o: ServerOptions) {
     if (!kind || !target || !o.push.send[kind]) return c.json({ error: "not a push target this server can use" }, 400);
     await o.push.targets.save(device, me, kind, target);
     return c.json({ on: true });
+  });
+
+  /** The measure (BIX "Suggestions and their answers"): per question, used / edited / declined. Officers and core members. */
+  app.get("/Organization/:id/$suggestions", async (c) => {
+    const me = (await o.identify(c.req.raw)).person; if (!me) return c.json({ error: "sign in first" }, 401);
+    const org = `Organization/${c.req.param("id")}`;
+    const roles = (await o.store.search?.("Role", { person: me, organization: org }) ?? []).filter((r) => r["status"] === "active");
+    if (!roles.some((r) => ["officer", "core-member"].includes((r["code"] as { code?: string } | undefined)?.code ?? ""))) return c.json({ error: "officers and core members only" }, 403);
+    const days = Math.min(365, Math.max(1, Number(c.req.query("days") ?? 30)));
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+    const proposals = (await o.store.search?.("ChangeProposal", { organization: org }) ?? []);
+    const inis = await o.store.search?.("Initiative", { organization: org }) ?? [];
+    const tasks = (await Promise.all(inis.map((i) => o.store.search?.("Task", { partOf: `Initiative/${i.id}` }) ?? []))).flat();
+    const provs = (await Promise.all([...inis, ...tasks].slice(0, 400).map((r) => o.store.provenanceFor?.(`${r.resourceType}/${r.id}`) ?? []))).flat();
+    return c.json({ days, byQuestion: suggestionStats(provs, proposals, since, ["0.0-placeholder"]) });
   });
 
   app.post("/$me/delete", async (c) => {
