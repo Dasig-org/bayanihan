@@ -7,3 +7,4 @@ export * from "./vote.js";
 export * from "./authorize.js";
 export * from "./bundle.js";
 export * from "./proposal.js";
+export * from "./practice.js";

@@ -29,6 +29,8 @@ export const lifecycles: Record<string, { field: string; graph: Graph }> = {
   Invitation: { field: "status", graph: { sent: ["accepted", "declined", "expired", "withdrawn"], accepted: [], declined: [], expired: [], withdrawn: [] } },
   Consent: { field: "status", graph: { active: ["withdrawn"], withdrawn: ["active"] } },
   // BIX "Proposed edits and assistance" (2026-11-11). `outdated` is set by rule when the target moves past `basedOn`.
+  // BIX "Project memory: Practices" (2026-11-13).
+  Practice: { field: "status", graph: { draft: ["active", "retired"], active: ["retired"], retired: [] } },
   ChangeProposal: { field: "status", graph: { draft: ["accepted", "declined", "withdrawn", "outdated"], accepted: [], declined: [], withdrawn: [], outdated: [] } },
 };
 

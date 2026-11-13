@@ -19,6 +19,8 @@ export type Context = {
   reviewRequired?: boolean;
   /** The actor made this draft (from its Provenance), so they may withdraw it, and cancel its drafts, without a lead's permission. */
   closesOwnDraft?: boolean;
+  /** This change applies an accepted ChangeProposal (set by acceptProposal); its content was written by the proposal's author. */
+  viaProposal?: boolean;
   /** The id generator for new Provenance records. */
   newId: () => string;
 };
@@ -110,6 +112,19 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
   // A group's assistance areas are its own choice: only a person with org.manage changes them (BIX rule 22).
   if (next.resourceType === "Organization" && JSON.stringify(prev?.["assist"] ?? []) !== JSON.stringify(next["assist"] ?? [])) {
     if (ctx.actor.type !== "person" || !ctx.permissions.includes("org.manage")) reasons.push("turning assistance on or off needs org.manage");
+  }
+
+  // Project memory (BIX rules 4, 23): figures are calculated by rule; a lead makes a Practice active; lessons name their author.
+  if (next.resourceType === "Practice") {
+    if (JSON.stringify(prev?.["observed"] ?? null) !== JSON.stringify(next["observed"] ?? null) && ctx.actor.type !== "rule") reasons.push("a Practice's figures are calculated by rule, never set");
+    if (prev && prev["status"] === "draft" && next["status"] === "active" && (ctx.actor.type !== "person" || !ctx.permissions.includes("initiative.plan"))) reasons.push("making a Practice active needs initiative.plan");
+    type L = { author?: Ref; time: string; text: string };
+    const before = new Set(((prev?.["lesson"] as L[] | undefined) ?? []).map((l) => JSON.stringify(l)));
+    for (const l of (next["lesson"] as L[] | undefined) ?? []) {
+      if (before.has(JSON.stringify(l))) continue;
+      const who = ctx.actor.type === "person" ? ctx.actor.person : ctx.actor.type === "model" ? ctx.actor.onBehalfOf : undefined;
+      if (!l.author || (!ctx.viaProposal && (!who || l.author.reference !== who.reference))) reasons.push("a lesson names the person who wrote it");
+    }
   }
 
   if (next.resourceType === "Task" && prev && ctx.actor.type === "person") {

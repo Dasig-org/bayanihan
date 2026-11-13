@@ -78,6 +78,7 @@ const NEVER_CHANGE: Record<string, string[]> = {
   Decision: ["outcome"],
   Organization: ["assist"],
   Task: ["verification"],
+  Practice: ["observed"],
 };
 
 /** Reasons a proposed change touches something off limits, comparing the target before and after the patch. */
@@ -173,7 +174,7 @@ export function acceptProposal(proposal: BixResource, target: BixResource, inclu
 
   const records: BixResource[] = [], provenance: BixResource[] = [];
   const step = (prev: BixResource, next: BixResource) => {
-    const c = applyChange(prev, next, ctx);
+    const c = applyChange(prev, next, { ...ctx, viaProposal: true });
     if (!c.ok) return c.reasons;
     records.push(c.record); provenance.push(c.provenance);
     return null;
