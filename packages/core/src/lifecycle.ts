@@ -25,6 +25,8 @@ export const lifecycles: Record<string, { field: string; graph: Graph }> = {
   Decision: { field: "status", graph: { draft: ["open", "cancelled"], open: ["closed", "cancelled"], closed: ["decided", "no-quorum"], decided: [], "no-quorum": [], cancelled: [] } },
   TaskDefinition: { field: "status", graph: { draft: ["active"], active: ["retired"], retired: [] } },
   ShareLink: { field: "status", graph: { active: ["revoked"], revoked: [] } },
+  // BIX "Usernames and invitations" (2026-11-13). Only the invitee accepts or declines; the sender withdraws.
+  Invitation: { field: "status", graph: { sent: ["accepted", "declined", "expired", "withdrawn"], accepted: [], declined: [], expired: [], withdrawn: [] } },
   Consent: { field: "status", graph: { active: ["withdrawn"], withdrawn: ["active"] } },
   // BIX "Proposed edits and assistance" (2026-11-11). `outdated` is set by rule when the target moves past `basedOn`.
   ChangeProposal: { field: "status", graph: { draft: ["accepted", "declined", "withdrawn", "outdated"], accepted: [], declined: [], withdrawn: [], outdated: [] } },

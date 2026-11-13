@@ -45,6 +45,12 @@ describe("claiming and asking", () => {
     const gone = task({ status: "cancelled" });
     expect(applyChange(gone, next(gone, { status: "ready" }), person(don, ["task.assign"])).ok).toBe(true);
   });
+  it("a task where the lead chooses can't be taken, only asked for; the lead can give it (BIX taking: ask)", () => {
+    const t = task({ taking: "ask", participant: [{ person: mia, role: "owner", status: "requested" }] });
+    expect(applyChange(t, next(t, { status: "accepted", owner: mia }), person(mia)).ok).toBe(false);
+    expect(applyChange(t, next(t, { status: "accepted", owner: mia, participant: [{ person: mia, role: "owner", status: "active" }] }), person(don, ["task.assign"])).ok).toBe(true);
+    expect(applyChange(task(), next(task(), { status: "accepted", owner: mia }), person(don, ["task.assign"])).ok).toBe(false); // not asked: ask them instead
+  });
   it("refuses claiming on someone else's behalf", () => {
     const t = task();
     expect(applyChange(t, next(t, { status: "accepted", owner: don }), person(mia)).ok).toBe(false);

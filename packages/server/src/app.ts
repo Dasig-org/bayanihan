@@ -9,6 +9,7 @@ import { canCreate } from "./create.js";
 import { ALLOWED_TYPES, MAX_FILE_BYTES, type FileStore } from "./files.js";
 import { newToken, hashToken, type LinkTokens } from "./links.js";
 import { dispatch, type Push } from "./push.js";
+import { inviteRoutes, type InviteStore } from "./invites.js";
 
 /** Ways to sign in linked to a Person (Google, Dasig.org, email…): (provider, subject) → Person, with the email shown in Settings. */
 export type Identities = { personFor(provider: string, subject: string): Promise<string | null>; link(provider: string, subject: string, person: string, label?: string): Promise<void>;
@@ -36,6 +37,8 @@ export type ServerOptions = {
   pairingCode?: () => string | null;
   /** Push notifications (src/push.ts): where to send, and the senders this server has keys for. Off when absent. */
   push?: Push;
+  /** Usernames and invitations (src/invites.ts). `inviteEmail` sends invitation emails; `inviteSalt` hashes addresses. */
+  invites?: InviteStore; inviteEmail?(to: string, subject: string, text: string): Promise<void>; inviteSalt?: string; appUrl?: string;
   /**
    * Open sign-up for a hosted server (the Dasig Ecosystem): GET /$challenge and POST /$join. A phone joins with a nickname,
    * or brings its Person; a Person with keys must sign the server's one-time challenge. `audience` is this server's public
@@ -190,6 +193,19 @@ export function createApp(o: ServerOptions) {
   async function canUpdate(me: string, prev: BixResource, next: BixResource): Promise<string | null> {
     const officer = await lastOfficerWhy(prev, next);
     if (officer) return officer;
+    // Invitations and usernames change only through their own routes (privacy and uniqueness are checked there).
+    if (prev.resourceType === "Invitation") return "answer or withdraw invitations from the app";
+    if (prev.resourceType === "Person" && JSON.stringify(prev["handle"] ?? null) !== JSON.stringify(next["handle"] ?? null)) return "change your username in Settings → Your account";
+    // Asking to do a task (teamwork D): add only yourself to participant[] as "requested", or cancel that.
+    if (prev.resourceType === "Task" && ["ready"].includes(String(prev["status"])) && next["status"] === prev["status"]) {
+      type P = { person: { reference: string }; status: string; role?: string };
+      const was = ((prev["participant"] as P[] | undefined) ?? []), now = ((next["participant"] as P[] | undefined) ?? []);
+      const strip = (r: BixResource) => JSON.stringify({ ...r, meta: undefined, participant: undefined });
+      const others = (xs: P[]) => JSON.stringify(xs.filter((x) => x.person.reference !== me));
+      const mineWas = was.find((x) => x.person.reference === me), mineNow = now.find((x) => x.person.reference === me);
+      const asking = !mineWas && mineNow?.status === "requested" || mineWas?.status === "requested" && !mineNow;
+      if (asking && strip(prev) === strip(next) && others(was) === others(now) && authorize(me, "claim", prev, await loadDirectory(o.store, me, prev)).allowed) return null;
+    }
     if (prev.resourceType === "Task" && ["accepted", "in-progress", "completed"].includes(String(next["status"])) && prev["status"] !== next["status"] && ["ready", "requested"].includes(String(prev["status"]))) {
       for (const d of (next["dependsOn"] as { reference: string }[] | undefined) ?? []) {
         const [dt, did] = d.reference.split("/");
@@ -1114,6 +1130,9 @@ export function createApp(o: ServerOptions) {
   });
 
   /** Ask to delete your account: after 14 days your profile is removed; groups keep the work, unnamed (spec: Privacy and safety). */
+  if (o.invites) inviteRoutes(app, { store: o.store as never, invites: o.invites, identify: (r) => o.identify(r), identities: o.email?.identities ?? o.oidc?.identities ?? o.google?.identities,
+    sendEmail: o.inviteEmail, appUrl: o.appUrl ?? "https://volunteer.dasig.org", salt: o.inviteSalt ?? "bayanihan", now: o.now, newId: o.newId, told });
+
   /** Push: the web key to subscribe with, register this device, or stop. A device is its sign-in token's hash. */
   app.get("/$push", (c) => c.json({ web: o.push?.send.web ? o.push.webPublicKey ?? null : null, expo: !!o.push?.send.expo }));
   app.post("/$push", async (c) => {

@@ -118,7 +118,12 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
     // Claiming: you may only make yourself the owner.
     // (A shift with several places fills up instead: it stays owned by its team; BIX 2026-11-09.)
     const shiftFull = ((next["slots"] as number | undefined) ?? 1) > 1 && same(owner, prev["owner"] as Ref);
-    if (a === "ready" && b === "accepted" && !same(owner, me) && !shiftFull) reasons.push("you can claim a task only for yourself");
+    // A lead may give the task to someone who asked to do it (their "requested" entry in participant[]).
+    const askedFor = ((prev["participant"] as { person: Ref; status?: string }[] | undefined) ?? []).some((p) => same(p.person, owner) && p.status === "requested");
+    const giving = askedFor && ctx.permissions.includes("task.assign");
+    if (a === "ready" && b === "accepted" && !same(owner, me) && !shiftFull && !giving) reasons.push("you can claim a task only for yourself");
+    // Task.taking "ask" (BIX 2026-11-13): people ask to do it; only a lead (task.assign) gives it to someone.
+    if (next["taking"] === "ask" && a === "ready" && b === "accepted" && !ctx.permissions.includes("task.assign")) reasons.push("ask to do this task; its lead chooses who does it");
     // Asking someone needs task.assign.
     if (a === "ready" && b === "requested" && !ctx.permissions.includes("task.assign")) reasons.push("asking someone needs task.assign");
     // Reopening done, failed or cancelled work is a lead's call.

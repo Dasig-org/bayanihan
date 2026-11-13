@@ -14,3 +14,12 @@ export async function sesSender(o: { region: string; from: string; network?: str
       Content: { Simple: { Subject: { Data: `${code} is your sign-in code` }, Body: { Text: { Data: text }, Html: { Data: html } } } } }));
   };
 }
+
+/** A plain-text email (invitations): no detail beyond who invited and which group (BIX privacy rule 4). */
+export async function sesTextSender(o: { region: string; from: string; credentials?: { accessKeyId: string; secretAccessKey: string } }) {
+  const { SESv2Client, SendEmailCommand } = await import("@aws-sdk/client-sesv2");
+  const ses = new SESv2Client({ region: o.region, ...(o.credentials ? { credentials: o.credentials } : {}) });
+  return async (to: string, subject: string, text: string) => {
+    await ses.send(new SendEmailCommand({ FromEmailAddress: o.from, Destination: { ToAddresses: [to] }, Content: { Simple: { Subject: { Data: subject }, Body: { Text: { Data: text } } } } }));
+  };
+}

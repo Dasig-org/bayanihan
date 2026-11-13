@@ -26,6 +26,9 @@ create table if not exists bix_files (hash text primary key, content_type text n
 create table if not exists bix_file_bytes (hash text primary key, data text not null);
 create table if not exists bix_devices (token_hash text primary key, person_id text not null, created_at text not null);
 create table if not exists bix_email_codes (email text primary key, code_hash text not null, expires_at text not null, tries integer not null, sent_at text not null);
+create table if not exists bix_handles (value text primary key, person_id text not null, released_at text);
+create table if not exists bix_invite_emails (invitation_id text primary key, email_hash text not null, created_at text not null);
+create table if not exists bix_invite_blocks (person_id text not null, org text not null, primary key (person_id, org));
 create table if not exists bix_push (device text not null, person_id text not null, kind text not null, target text not null, created_at text not null, primary key (device, kind));
 create table if not exists bix_identities (provider text not null, subject text not null, person_id text not null, created_at text not null, primary key (provider, subject));
 `;
@@ -186,5 +189,16 @@ export async function sqliteStore(db: Db) {
     async tried(email: string) { await db.run("update bix_email_codes set tries = tries + 1 where email = ?", email); },
     async clear(email: string) { await db.run("delete from bix_email_codes where email = ?", email); },
   };
-  return { store, keys, sequences, linkTokens, fileMeta, files, devices, identities, groupFiles, pushTargets, emailCodes };
+  /** Usernames and invitations (src/invites.ts). Emails only as salted hashes, removed once matched. */
+  const invites = {
+    async handleOwner(value: string) { const r = await db.all<{ person_id: string; released_at: string | null }>("select person_id, released_at from bix_handles where value = ?", value); return r[0] ? { person: r[0].person_id, releasedAt: r[0].released_at } : null; },
+    async setHandle(value: string, person: string) { await db.run("insert or replace into bix_handles values (?, ?, null)", value, person); },
+    async releaseHandle(value: string, at: string) { await db.run("update bix_handles set released_at = ? where value = ?", at, value); },
+    async saveEmail(invitation: string, hash: string) { await db.run("insert or replace into bix_invite_emails values (?, ?, ?)", invitation, hash, now()); },
+    async invitationsForHashes(hashes: string[]) { if (!hashes.length) return []; return (await db.all<{ invitation_id: string }>(`select invitation_id from bix_invite_emails where email_hash in (${hashes.map(() => "?").join(",")})`, ...hashes)).map((r) => r.invitation_id); },
+    async forgetEmail(invitation: string) { await db.run("delete from bix_invite_emails where invitation_id = ?", invitation); },
+    async block(person: string, org: string) { await db.run("insert or ignore into bix_invite_blocks values (?, ?)", person, org); },
+    async blocked(person: string, org: string) { return (await db.all("select 1 from bix_invite_blocks where person_id = ? and org = ?", person, org)).length > 0; },
+  };
+  return { store, keys, sequences, linkTokens, fileMeta, files, devices, identities, groupFiles, pushTargets, emailCodes, invites };
 }

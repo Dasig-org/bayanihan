@@ -91,6 +91,10 @@ async function options(): Promise<ServerOptions> {
       // Email sign-in codes through SES: BIX_EMAIL_FROM (a verified sender), BIX_EMAIL_SES_* credentials of their own.
       ...(env.BIX_EMAIL_FROM ? { email: { identities: s.identities, codes: s.emailCodes, send: await (await import("./email-senders.js")).sesSender({ region: env.BIX_EMAIL_SES_REGION ?? env.AWS_REGION ?? "ap-southeast-1", from: env.BIX_EMAIL_FROM, network: env.BIX_NETWORK_NAME,
         ...(env.BIX_EMAIL_SES_ACCESS_KEY_ID && env.BIX_EMAIL_SES_SECRET_ACCESS_KEY ? { credentials: { accessKeyId: env.BIX_EMAIL_SES_ACCESS_KEY_ID, secretAccessKey: env.BIX_EMAIL_SES_SECRET_ACCESS_KEY } } : {}) }) } } : {}),
+      // Usernames and invitations (src/invites.ts). Invitation emails go through the same SES sender as sign-in codes.
+      invites: s.invites, inviteSalt: env.BIX_INVITE_SALT, appUrl: env.BIX_APP_URL,
+      ...(env.BIX_EMAIL_FROM ? { inviteEmail: await (await import("./email-senders.js")).sesTextSender({ region: env.BIX_EMAIL_SES_REGION ?? env.AWS_REGION ?? "ap-southeast-2", from: env.BIX_EMAIL_FROM,
+        ...(env.BIX_EMAIL_SES_ACCESS_KEY_ID && env.BIX_EMAIL_SES_SECRET_ACCESS_KEY ? { credentials: { accessKeyId: env.BIX_EMAIL_SES_ACCESS_KEY_ID, secretAccessKey: env.BIX_EMAIL_SES_SECRET_ACCESS_KEY } } : {}) }) } : {}),
       ...(env.BIX_GROUP_STORAGE_BYTES ? { storage: { perGroupBytes: Number(env.BIX_GROUP_STORAGE_BYTES), groups: s.groupFiles } } : {}),
       ...(env.BIX_OIDC_PROVIDERS ? { oidc: { identities: s.identities, providers: await oidcProviders(env.BIX_OIDC_PROVIDERS) } } : {}),
       ...(env.BIX_OPEN_JOIN === "1" ? { openJoin: { audience: env.BIX_PUBLIC_URL ?? `http://localhost:${port}`, perHour: Number(env.BIX_JOIN_PER_HOUR ?? 10) } } : {}),

@@ -77,3 +77,16 @@ from one address); `POST /$email/verify {email, code}` signs in or makes the acc
 sign in (with their email), the phones and browsers signed in, and which method this one used; `POST
 /$me/account/remove` removes a method (never the last one, nor the one this phone signed in with) or signs another
 phone or browser out (`{device}`).
+
+## Usernames and invitations
+
+BIX "Usernames and invitations". `POST /$me/handle {value | null | findable}` claims, changes or drops a username (rules
+in `src/invites.ts`: 3–20 lowercase letters, digits, `.` `_`, reserved words, one change every 30 days, released names
+held 30 days). `GET /$handle/:value` finds a person by exact username only, returning nickname and photo.
+`POST /$invite {target, role, handle | person | email, message}` sends an invitation (the core team, or everyone if
+the group's `invitePolicy` is `members`); `GET /$invitations` lists yours; `POST /$invitations/:id {answer}` accepts,
+declines, blocks or withdraws. Invitations and usernames never change through a plain bundle.
+
+Privacy: an invited email is kept only as a salted hash (`BIX_INVITE_SALT`) until that address signs in, never in a
+record or a response, and the answer is the same whether or not anyone uses it. Invitation emails go through the
+sign-in SES sender (`BIX_EMAIL_FROM`); `BIX_APP_URL` is the app link in them.

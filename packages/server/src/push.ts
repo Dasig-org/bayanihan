@@ -64,6 +64,10 @@ export async function pushesFor(prev: BixResource | null, rec: BixResource, acto
       for (const person of to) out.push({ person, m: { title: `Someone wants to join ${rec.name as string}`, body: "Open Dasig to answer.", url: `/team/${rec.id}` } });
     }
   }
+  if (rec.resourceType === "Invitation" && (rec.status === "sent") && (rec.invitee as { reference?: string } | undefined)?.reference && !(prev?.invitee as { reference?: string } | undefined)?.reference) {
+    const by = await get("Person", idOf((rec.invitedBy as { reference: string }).reference));
+    out.push({ person: (rec.invitee as { reference: string }).reference, m: { title: `${(by?.name as { text?: string } | undefined)?.text ?? "Someone"} invited you to help`, body: "Open Dasig to answer.", url: "/invitations" } });
+  }
   if (rec.resourceType === "Offer" && !prev) {
     // Offer.matchedTo is one Reference (BIX); accept a list too, from older records.
     const m = rec.matchedTo as { reference?: string } | { reference?: string }[] | undefined;
