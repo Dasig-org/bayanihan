@@ -118,7 +118,8 @@ function seesWithinGroup(person: string, record: BixResource, owner: ReturnType<
 
 const involves = (person: string, record: BixResource) =>
   ref(record["owner"]) === person || ref(record["person"]) === person ||
-  ((record["participant"] as { person: Ref }[] | undefined) ?? []).some((p) => p.person.reference === person);
+  // Only people actively on it: a pending ask ("requested") or someone who left ("ended") can't edit (2026-11-13).
+  ((record["participant"] as { person: Ref; status?: string }[] | undefined) ?? []).some((p) => p.person.reference === person && (p.status ?? "active") === "active");
 
 export type ShareGrant = { grants: string[]; status: string; blocked?: Ref[] };
 

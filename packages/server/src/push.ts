@@ -56,8 +56,13 @@ export async function pushesFor(prev: BixResource | null, rec: BixResource, acto
   if (rec.resourceType === "Team") {
     const before = new Set(parts(prev).filter((p) => p.status === "requested").map((p) => p.person?.reference));
     const asking = parts(rec).filter((p) => p.status === "requested" && !before.has(p.person?.reference));
-    if (asking.length) for (const l of parts(rec).filter((p) => p.role === "lead" && p.status === "active"))
-      out.push({ person: l.person!.reference!, m: { title: `Someone wants to join ${rec.name as string}`, body: "Open Dasig to add them.", url: `/team/${rec.id}` } });
+    if (asking.length) {
+      // The team's leads; a team with no lead goes to the group's core team (D5, 2026-11-13).
+      let to = parts(rec).filter((p) => p.role === "lead" && p.status === "active").map((p) => p.person!.reference!);
+      const org = (rec.organization as { reference?: string } | undefined)?.reference;
+      if (!to.length && org) to = await leadsOf(search, org);
+      for (const person of to) out.push({ person, m: { title: `Someone wants to join ${rec.name as string}`, body: "Open Dasig to answer.", url: `/team/${rec.id}` } });
+    }
   }
   if (rec.resourceType === "Offer" && !prev) {
     // Offer.matchedTo is one Reference (BIX); accept a list too, from older records.

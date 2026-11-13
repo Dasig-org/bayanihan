@@ -215,6 +215,22 @@ export function createApp(o: ServerOptions) {
     if (prev.resourceType === "Organization" && permissionsForRecord(me, prev, dir).includes("org.manage")) return null;
     if (prev.resourceType === "Role" && permissionsForRecord(me, prev, dir).includes("member.manage")) return null;
     if (prev.resourceType === "Team" && permissionsForRecord(me, prev, dir).some((p) => ["task.assign", "member.manage", "org.manage"].includes(p))) return null;
+    // Asking to join a team (teamwork sketches B, 2026-11-13): anyone in the team's group may add only themselves as
+    // "requested", cancel their own request, or leave (their own entry to "ended"). Nothing else may change.
+    if (prev.resourceType === "Team") {
+      type P = { person: { reference: string }; status: string; role?: string };
+      const was = ((prev["participant"] as P[] | undefined) ?? []), now = ((next["participant"] as P[] | undefined) ?? []);
+      const strip = (r: BixResource) => JSON.stringify({ ...r, meta: undefined, participant: undefined });
+      const others = (xs: P[]) => JSON.stringify(xs.filter((x) => x.person.reference !== me));
+      const mineWas = was.find((x) => x.person.reference === me), mineNow = now.find((x) => x.person.reference === me);
+      const org = (prev["organization"] as { reference?: string } | undefined)?.reference;
+      const inGroup = !!org && (await o.store.search?.("Role", { person: me, organization: org }) ?? []).some((r) => r["status"] === "active");
+      const ok = strip(prev) === strip(next) && others(was) === others(now) && inGroup && (
+        (!mineWas || mineWas.status === "ended") && mineNow?.status === "requested" && (mineNow.role ?? "volunteer") !== "lead"   // ask
+        || mineWas?.status === "requested" && !mineNow                                                                          // cancel
+        || mineWas?.status === "active" && mineNow?.status === "ended");                                                        // leave
+      if (ok) return null;
+    }
     if (prev.resourceType === "Decision" || prev.resourceType === "Role" || prev.resourceType === "Initiative" || prev.resourceType === "Position") return permissionsForRecord(me, prev, dir).some((p) => ["initiative.plan", "org.manage", "task.assign", "member.manage"].includes(p)) ? null : "not yours to change";
     return "only the people on it, or its lead, can change this";
   }
