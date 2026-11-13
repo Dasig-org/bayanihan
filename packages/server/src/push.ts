@@ -60,7 +60,9 @@ export async function pushesFor(prev: BixResource | null, rec: BixResource, acto
       out.push({ person: l.person!.reference!, m: { title: `Someone wants to join ${rec.name as string}`, body: "Open Dasig to add them.", url: `/team/${rec.id}` } });
   }
   if (rec.resourceType === "Offer" && !prev) {
-    const needRef = ((rec.matchedTo ?? []) as { reference: string }[])[0]?.reference;
+    // Offer.matchedTo is one Reference (BIX); accept a list too, from older records.
+    const m = rec.matchedTo as { reference?: string } | { reference?: string }[] | undefined;
+    const needRef = (Array.isArray(m) ? m[0] : m)?.reference;
     const need = needRef ? await get("Need", idOf(needRef)) : null;
     const ini = need ? await get("Initiative", idOf((need.initiative as { reference?: string } | undefined)?.reference)) : null;
     const org = (ini?.organization as { reference?: string } | undefined)?.reference;
