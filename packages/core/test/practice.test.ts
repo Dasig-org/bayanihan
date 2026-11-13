@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  authorize, type Directory,
   acceptProposal, adopt, applyChange, closeOut, computeObserved, evidence, outOfOrder, proposeChange, shareable,
   usuallyDoneByNow, usuallyNeeded, validate, withObserved, type BixResource,
 } from "../src/index.js";
@@ -11,7 +12,7 @@ const ORG = `Organization/${id(1)}`;
 const run = { system: "bayanihan:initiative-category", code: "fun-run" };
 const now = "2027-02-05T20:00:00+08:00";
 const newId = () => crypto.randomUUID();
-const rule = { actor: { type: "rule" as const, rule: "practice-figures" }, permissions: [], now, newId };
+const rule = { actor: { type: "rule" as const, rule: "practice-figures" }, permissions: [], now, newId, authoritative: true };
 const person = (who: string, permissions: string[] = []) => ({ actor: { type: "person" as const, person: R(who) }, permissions, now, newId });
 const lead = person("Person/ana", ["initiative.plan", "task.assign"]);
 
@@ -63,6 +64,8 @@ describe("calculated figures (rule 23)", () => {
     expect(validate(next).valid).toBe(true);
     expect(applyChange(permit, next, rule).ok).toBe(true);
     expect(applyChange(permit, next, lead).ok).toBe(false);
+    // Only the group's server or hub calculates them (rule 23): a phone with part of the work never does.
+    expect(applyChange(permit, next, { ...rule, authoritative: false }).ok).toBe(false);
   });
 
   it("no proposal may change them (rule 21)", () => {
@@ -142,5 +145,27 @@ describe("Practices in a group's hands", () => {
     expect(a).toMatchObject({ source: "adopted", status: "draft", organization: R(`Organization/${id(3)}`), adoptedFrom: R(`Practice/${id(50)}`) });
     expect(a["observed"]).toBeUndefined();
     expect(validate(a).valid).toBe(true);
+  });
+});
+
+describe("one memory for the whole group (rule 26)", () => {
+  const role = (p: string, code: string): BixResource => ({ resourceType: "Role", id: p, meta: { version: 1 }, person: R(`Person/${p}`), organization: R(ORG), code: { code }, status: "active" });
+  const logistics: BixResource = { resourceType: "Team", id: "logistics", meta: { version: 1 }, name: "Logistics", organization: R(ORG), initiative: R(`Initiative/${id(20)}`),
+    participant: [{ person: R("Person/vic"), role: "volunteer", status: "active" }] };
+  const thisYear = project(20, "2027-03-06T05:00:00+08:00", "active");
+  const onPermit = step(300, 20, 50, { status: "ready", audience: "team" });
+  const d = (tasks: BixResource[]): Directory => ({ roles: [role("ana", "officer"), role("cora", "core-member"), role("vic", "volunteer-episodic")], positions: [], teams: [logistics], initiatives: [thisYear], tasks });
+  const sees = (who: string, rec: BixResource, dir: Directory) => authorize(`Person/${who}`, "view", rec, dir).allowed;
+
+  it("the core team sees every Practice; a volunteer only those of steps they can see", () => {
+    expect(sees("ana", permit, d([])) && sees("cora", shuttle, d([]))).toBe(true);
+    expect(sees("vic", permit, d([]))).toBe(false);
+    expect(sees("vic", permit, d([onPermit]))).toBe(true);
+    expect(sees("vic", shuttle, d([onPermit]))).toBe(false);
+  });
+
+  it("not through a step on a team they aren't on", () => {
+    const elsewhere = { ...onPermit, team: R("Team/finance"), owner: R("Team/finance") } as BixResource;
+    expect(sees("vic", permit, d([elsewhere]))).toBe(false);
   });
 });

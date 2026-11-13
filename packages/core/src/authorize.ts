@@ -9,6 +9,8 @@ export type Directory = {
   positions: BixResource[];  // Position records
   teams: BixResource[];      // Team records
   initiatives: BixResource[];// Initiative records (for owner org, partners, personal owner)
+  /** Tasks that point to a Practice, so a volunteer can see the Practices of steps they can see (BIX rule 26). Optional. */
+  tasks?: BixResource[];
 };
 
 /** Default permissions by Role code (spec, "Value sets"). */
@@ -104,6 +106,12 @@ const onTeam = (t: BixResource | undefined, person: string) =>
  * Records that don't belong to a project or committee (the group itself, roles, positions) are seen by every member.
  */
 function seesWithinGroup(person: string, record: BixResource, owner: ReturnType<typeof owningParty>, perms: Set<string>, dir: Directory): boolean {
+  // A group's memory (BIX rule 26): the core team sees all of it; anyone else only through a step they can see.
+  if (record.resourceType === "Practice") {
+    if (perms.has("core-team") || perms.has("view.organization")) return true;
+    const me = refOf(record);
+    return (dir.tasks ?? []).some((t) => ref(t["practice"]) === me && authorize(person, "view", t, dir).allowed);
+  }
   if (!owner.initiative && !owner.team) return true;
   if (perms.has("view.organization") || involves(person, record) || onTeamWithInitiativeAccess(person, owner.initiative, dir)) return true;
   const team = owner.team ? dir.teams.find((t) => refOf(t) === owner.team) : undefined;

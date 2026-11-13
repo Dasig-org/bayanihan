@@ -21,6 +21,8 @@ export type Context = {
   closesOwnDraft?: boolean;
   /** This change applies an accepted ChangeProposal (set by acceptProposal); its content was written by the proposal's author. */
   viaProposal?: boolean;
+  /** This rule runs on the group's home server, or its hub phone (BIX rule 23): the only place Practice figures are calculated. */
+  authoritative?: boolean;
   /** The id generator for new Provenance records. */
   newId: () => string;
 };
@@ -116,7 +118,10 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
 
   // Project memory (BIX rules 4, 23): figures are calculated by rule; a lead makes a Practice active; lessons name their author.
   if (next.resourceType === "Practice") {
-    if (JSON.stringify(prev?.["observed"] ?? null) !== JSON.stringify(next["observed"] ?? null) && ctx.actor.type !== "rule") reasons.push("a Practice's figures are calculated by rule, never set");
+    if (JSON.stringify(prev?.["observed"] ?? null) !== JSON.stringify(next["observed"] ?? null)) {
+      if (ctx.actor.type !== "rule") reasons.push("a Practice's figures are calculated by rule, never set");
+      else if (!ctx.authoritative) reasons.push("a Practice's figures are calculated only by the group's server or hub, where all its records are");
+    }
     if (prev && prev["status"] === "draft" && next["status"] === "active" && (ctx.actor.type !== "person" || !ctx.permissions.includes("initiative.plan"))) reasons.push("making a Practice active needs initiative.plan");
     type L = { author?: Ref; time: string; text: string };
     const before = new Set(((prev?.["lesson"] as L[] | undefined) ?? []).map((l) => JSON.stringify(l)));
