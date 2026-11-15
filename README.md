@@ -1,15 +1,16 @@
 # Bayanihan Core and Bayanihan Server
 
-> **Private preview.** The three repos aren't on npm yet, so they're used side by side. Clone all three into one folder:
+> **Early and open.** v0.1, in pilot. The `@bayanihan/*` packages aren't on npm yet, so this repository expects [BIX](https://github.com/Dasig-org/bix) beside it:
 >
 > ```sh
 > mkdir dasig && cd dasig
 > git clone https://github.com/Dasig-org/bix.git
 > git clone https://github.com/Dasig-org/bayanihan.git
-> git clone https://github.com/Dasig-org/dasig-app.git
+> (cd bix && npm install)
+> cd bayanihan && npm install
 > ```
 >
-> Then `npm install` inside `bayanihan/`, and inside `dasig-app/app/`. Please don't share the code outside the preview yet.
+> To run the Dasig app as well, also clone [`bayani`](https://github.com/Dasig-org/bayani) and [`dasig-app`](https://github.com/Dasig-org/dasig-app) into the same folder; see the app's README.
 
 The open engine and reference server for [BIX, the Bayanihan Information Exchange](https://github.com/Dasig-org/bix): an open format for the work of volunteer groups and civic organizations.
 

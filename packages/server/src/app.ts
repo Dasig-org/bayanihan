@@ -190,6 +190,16 @@ export function createApp(o: ServerOptions) {
     return others.length ? null : "a group needs at least one officer. Make someone else an officer first";
   }
 
+  /** Is `me` the owner of the Task this new Task sits under (partOf)? Then they may add subtasks under it (BIX). */
+  async function ownsParent(me: string, r: BixResource): Promise<boolean> {
+    const up = (r["partOf"] as { reference?: string } | undefined)?.reference;
+    if (r.resourceType !== "Task" || !up?.startsWith("Task/")) return false;
+    const parent = await o.store.get("Task", up.split("/")[1]!);
+    if (!parent) return false;
+    type P = { person: { reference: string }; role?: string; status: string };
+    return (parent["owner"] as { reference?: string } | undefined)?.reference === me || ((parent["participant"] as P[] | undefined) ?? []).some((p) => p.person.reference === me && p.role === "owner" && p.status === "active");
+  }
+
   async function canUpdate(me: string, prev: BixResource, next: BixResource): Promise<string | null> {
     const officer = await lastOfficerWhy(prev, next);
     if (officer) return officer;
@@ -352,7 +362,7 @@ export function createApp(o: ServerOptions) {
       for (const e of entries) {
         const prev = await o.store.get(e.resource.resourceType, e.resource.id);
         if (isReplay(prev, e.resource)) { results.push({ ok: true, record: prev }); continue; }
-        const why = (prev ? await canUpdate(me, prev, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource))) ?? (await privacyWhy(e.resource));
+        const why = (prev ? await canUpdate(me, prev, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource), { ownsParent: await ownsParent(me, e.resource) })) ?? (await privacyWhy(e.resource));
         if (why) { results.push({ ok: false, reasons: [why], current: prev }); continue; }
         const ab = assisted(e.assistedBy);
         const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now(), ...(ab ? { assistedBy: ab } : {}) });
@@ -372,7 +382,7 @@ export function createApp(o: ServerOptions) {
       for (const e of entries) {
         const prevRec = await o.store.get(e.resource.resourceType, e.resource.id);
         if (isReplay(prevRec, e.resource)) continue;
-        const why = (prevRec ? await canUpdate(me, prevRec, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource))) ?? (await privacyWhy(e.resource));
+        const why = (prevRec ? await canUpdate(me, prevRec, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource), { ownsParent: await ownsParent(me, e.resource) })) ?? (await privacyWhy(e.resource));
         if (why) { refusedNew.push({ record: e.resource, reasons: [why], current: prevRec }); continue; }
         const ab = assisted(e.assistedBy);
         changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: { ...(await ctxFor(e.resource)), ...(ab ? { assistedBy: ab } : {}) } });

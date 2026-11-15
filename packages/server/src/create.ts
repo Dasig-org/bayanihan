@@ -5,7 +5,7 @@ const ref = (x: unknown) => (x as { reference?: string } | undefined)?.reference
 const draft = (r: BixResource) => r["status"] === "draft" || r["intent"] === "proposal";
 
 /** May this person create this new record? Everything not listed is refused. */
-export function canCreate(me: string, r: BixResource, dir: Directory): string | null {
+export function canCreate(me: string, r: BixResource, dir: Directory, o: { ownsParent?: boolean } = {}): string | null {
   const perms = new Set(permissionsForRecord(me, r, dir));
   const member = perms.has("member") || perms.has("team.member");
   switch (r.resourceType) {
@@ -26,9 +26,18 @@ export function canCreate(me: string, r: BixResource, dir: Directory): string | 
       if (ref(r["owner"]) === me && !dir.initiatives.length) return null; // personal task
       if (dir.initiatives.some((i) => ref(i["person"]) === me)) return null; // in my personal project
       if (draft(r) && member) return null; // anyone on the team may propose
+      // BIX "Who may change what on a Task": the owner of a Task may add subtasks under it (partOf), for themselves or
+      // open to the team; asking someone else to do one stays with task.assign.
+      if (r.resourceType === "Task" && o.ownsParent && r["status"] !== "requested" && (!ref(r["owner"]) || ref(r["owner"]) === me || ref(r["owner"])!.startsWith("Team/"))) return null;
       if (r.resourceType === "Offer" && ref(r["offeredBy"]) === me) return null; // offering help
       return perms.has("task.assign") || perms.has("initiative.plan") ? null : "join the team to suggest work; leads add it directly";
     }
+    // BIX "Project memory: Practices", closing a project: a lead keeps a step for next time as the group's own Practice
+    // (rule 4: making one active needs initiative.plan). Its figures are never set by a person (rule 23, also checked in Core).
+    case "Practice":
+      if (!(perms.has("initiative.plan") || perms.has("org.manage"))) return "keeping a step for next time needs initiative.plan";
+      if (r["observed"]) return "a Practice's figures are calculated by rule, never set";
+      return r["source"] === "own" ? null : "a group's new Practice is its own (source: own); starters are adopted, not created";
     case "Communication": return ref(r["sender"]) === me ? null : "you can only send as yourself";
     // BIX "Suggestions and their answers": anyone in the group may record "Not this time" (declined) or propose (draft).
     case "ChangeProposal":

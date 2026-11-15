@@ -24,4 +24,29 @@ describe("suggestions and their answers", () => {
     const m = await call(`/Organization/${O}/$suggestions`, undefined, ana.token);
     expect(m.json.byQuestion.applies).toEqual({ used: 1, edited: 0, declined: 1 });
   });
+
+  it("lets a lead keep a step for next time as the group's own Practice (close-out), linked, suggested by Bayani; never with figures", async () => {
+    const s = await sqliteStore(nodeDb());
+    const app = createApp({ store: s.store, keys: s.keys, sequences: s.sequences, linkTokens: s.linkTokens, devices: s.devices, files: s.files, openJoin: { audience: "https://x", perHour: 50 },
+      async identify(req) { const h = req.headers.get("authorization"); return { person: h?.startsWith("Bearer ") ? await s.devices.personFor(await hashToken(h.slice(7))) : null }; },
+      now: () => new Date().toISOString(), newId: () => crypto.randomUUID() });
+    const call = async (path: string, body?: unknown, tok?: string) => { const r = await app.request(path, { method: body ? "POST" : "GET", headers: { "content-type": "application/json", ...(tok ? { authorization: `Bearer ${tok}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }); return { status: r.status, json: (await r.json().catch(() => ({}))) as any }; };
+    const ana = (await call("/$join", { nickname: "Ana" })).json, ben = (await call("/$join", { nickname: "Ben" })).json;
+    const O = crypto.randomUUID(), I = crypto.randomUUID(), T = crypto.randomUUID();
+    const tx = (entry: unknown[], tok = ana.token) => call("/", { resourceType: "Bundle", type: "transaction", entry }, tok);
+    await tx([{ resource: { resourceType: "Organization", id: O, meta: { version: 1 }, name: "Club" } }]);
+    await tx([{ resource: { resourceType: "Initiative", id: I, meta: { version: 1 }, title: "Run", kind: "project", status: "active", organization: { reference: `Organization/${O}` } } }]);
+    const task = { resourceType: "Task", id: T, meta: { version: 1 }, intent: "plan", status: "ready", title: "Book the Lahug covered court", partOf: { reference: `Initiative/${I}` }, owner: { reference: `Person/${ana.person.id}` } };
+    expect((await tx([{ resource: task }])).status).toBe(200);
+    const P = crypto.randomUUID();
+    const practice = { resourceType: "Practice", id: P, meta: { version: 1 }, title: "Book the venue", organization: { reference: `Organization/${O}` }, status: "active", source: "own", appliesTo: [{ system: "bayanihan:initiative-category", code: "fun-run" }] };
+    const by = { type: "model", model: { name: "Bayani-1", version: "1", question: "general-title" } };
+    // Someone outside the group can't; figures can't be set.
+    expect((await tx([{ resource: { ...practice, id: crypto.randomUUID() } }], ben.token)).status).not.toBe(200);
+    expect((await tx([{ resource: { ...practice, id: crypto.randomUUID(), observed: { included: 3, ofProjects: 3 } } }])).status).not.toBe(200);
+    const r = await tx([{ resource: practice, assistedBy: by }, { resource: { ...task, meta: { version: 2 }, practice: { reference: `Practice/${P}` } }, assistedBy: by }]);
+    if (r.status !== 200) console.log(JSON.stringify(r.json).slice(0, 400));
+    expect(r.status).toBe(200);
+    expect((await call(`/Task/${T}`, undefined, ana.token)).json.practice.reference).toBe(`Practice/${P}`);
+  });
 });
