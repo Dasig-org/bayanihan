@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
-import { suggestionStats, applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, verifyChallenge, countVotes, type Store, type BixResource, type Signature } from "@bayanihan/core";
+import { suggestionStats, computeObserved, withObserved, applyChange, replay, resourceTypes, toBundle, authorize, owningParty, signRecord, verifyRecord, verifyChallenge, countVotes, type Store, type BixResource, type Signature } from "@bayanihan/core";
 import { frontPage } from "./front-page.js";
 import type { KeyStore } from "./keys.js";
 import { prefixFor, withRef, REF_SYSTEM, type Sequences } from "./refs.js";
@@ -190,6 +190,64 @@ export function createApp(o: ServerOptions) {
     return others.length ? null : "a group needs at least one officer. Make someone else an officer first";
   }
 
+  /*
+   * Project memory learns (BIX rule 23, "Project memory: Practices"; TRACKER A31). A Practice's `observed` figures are
+   * calculated by rule, only here on the group's home server (or its hub phone), where all of its records are, and
+   * recalculated when one of its projects completes or reopens, when a step's `practice` link changes, and when a
+   * Practice is created or changed (a step kept at close-out gets its figures at once). Every changed Practice is
+   * committed as a new version with a rule Provenance ("practice-figures"); unchanged ones are left alone.
+   */
+  async function orgOf(r: BixResource): Promise<string | undefined> {
+    const ref = (x: unknown) => (x as { reference?: string } | undefined)?.reference;
+    if (r.resourceType === "Practice" || r.resourceType === "Initiative") return ref(r["organization"]);
+    let at: BixResource | null = r;
+    for (let i = 0; at && i < 6; i++) {
+      const up = ref(at["partOf"]);
+      if (!up) return undefined;
+      const [t, id] = up.split("/");
+      at = await o.store.get(t!, id!);
+      if (at?.resourceType === "Initiative") return ref(at["organization"]);
+    }
+    return undefined;
+  }
+  /** Does this change touch what a group's Practice figures are calculated from? */
+  function touchesMemory(prev: BixResource | null, next: BixResource): boolean {
+    const ref = (x: unknown) => (x as { reference?: string } | undefined)?.reference;
+    if (next.resourceType === "Practice") return !prev || JSON.stringify(prev["appliesTo"]) !== JSON.stringify(next["appliesTo"]) || prev["status"] !== next["status"];
+    if (next.resourceType === "Initiative") return (prev?.["status"] === "completed") !== (next["status"] === "completed");
+    if (next.resourceType === "Task") return ref(prev?.["practice"]) !== ref(next["practice"]) || (!!ref(next["practice"]) && prev?.["status"] !== next["status"]);
+    return false;
+  }
+  async function recalculatePractices(org: string): Promise<number> {
+    if (!o.store.search) return 0;
+    const practices = (await o.store.search("Practice", { organization: org })).filter((p) => p["status"] !== "retired" && p["source"] !== "starter");
+    if (!practices.length) return 0;
+    const initiatives = await o.store.search("Initiative", { organization: org });
+    const tasks: BixResource[] = [];
+    // Steps and their subtasks (a kept smaller step is a Practice too), a few levels down.
+    let level = (await Promise.all(initiatives.map((i) => o.store.search!("Task", { partOf: `Initiative/${i.id}` })))).flat();
+    for (let d = 0; level.length && d < 3; d++) { tasks.push(...level); level = (await Promise.all(level.map((t) => o.store.search!("Task", { partOf: `Task/${t.id}` })))).flat(); }
+    const first = new Map<string, string | undefined>();
+    for (const t of tasks) {
+      const ref = `Task/${t.id}`;
+      const ps = o.store.provenanceFor ? await o.store.provenanceFor(ref) : [];
+      first.set(ref, ps.map((p) => String(p["occurredAt"] ?? p["recorded"] ?? "")).filter(Boolean).sort()[0]);
+    }
+    let changed = 0;
+    for (const p of practices) {
+      const now = o.now();
+      const obs = computeObserved(p, initiatives, tasks, (r) => first.get(r), now);
+      const strip = (x: unknown) => JSON.stringify({ ...((x as object | undefined) ?? {}), calculated: undefined });
+      if (strip(p["observed"]) === strip(obs)) continue;
+      const next = withObserved(p, obs);
+      const r = applyChange(p, next, { actor: { type: "rule", rule: "practice-figures" }, permissions: [], now, newId: o.newId, authoritative: true });
+      if (!r.ok) continue;
+      await o.store.commit(r.record, await seal(p, r.record, r.provenance));
+      changed++;
+    }
+    return changed;
+  }
+
   /** Is `me` the owner of the Task this new Task sits under (partOf)? Then they may add subtasks under it (BIX). */
   async function ownsParent(me: string, r: BixResource): Promise<boolean> {
     const up = (r["partOf"] as { reference?: string } | undefined)?.reference;
@@ -357,6 +415,7 @@ export function createApp(o: ServerOptions) {
     };
     const bundle = (await c.req.json()) as { type?: string; entry?: { resource: BixResource; occurredAt?: string; assistedBy?: unknown }[] };
     const entries = bundle.entry ?? [];
+    const memoryOrgs = new Set<string>();
     if (bundle.type === "transaction") {
       const results = [];
       for (const e of entries) {
@@ -371,9 +430,12 @@ export function createApp(o: ServerOptions) {
           await o.store.commit(committed, await seal(prev, committed, r.provenance));
           if (!prev && committed.resourceType === "Organization") await founderRole(me, committed);
           told(prev, committed, me);
+          if (touchesMemory(prev, committed)) { const g = await orgOf(committed); if (g) memoryOrgs.add(g); }
         }
         results.push(r.ok ? { ok: true, record: committed } : { ok: false, reasons: r.reasons, current: prev });
       }
+      // Project memory learns from what was just committed (rule 23), after the whole transaction.
+      for (const g of memoryOrgs) await recalculatePractices(g).catch(() => 0);
       return c.json({ resourceType: "Bundle", type: "transaction-response", entry: results }, results.every((r) => r.ok) ? 200 : 409);
     }
     if (bundle.type === "sync") {
@@ -388,8 +450,10 @@ export function createApp(o: ServerOptions) {
         changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: { ...(await ctxFor(e.resource)), ...(ab ? { assistedBy: ab } : {}) } });
       }
       const sealing = { get: (t: string, i: string) => o.store.get(t, i),
-        commit: async (rec: BixResource, prov: BixResource) => { const prev = await o.store.get(rec.resourceType, rec.id); const ref = await reference(prev, rec); await o.store.commit(ref, await seal(prev, ref, prov)); told(prev, ref, me); } };
+        commit: async (rec: BixResource, prov: BixResource) => { const prev = await o.store.get(rec.resourceType, rec.id); const ref = await reference(prev, rec); await o.store.commit(ref, await seal(prev, ref, prov)); told(prev, ref, me);
+          if (touchesMemory(prev, ref)) { const g = await orgOf(ref); if (g) memoryOrgs.add(g); } } };
       const out = await replay(sealing, changes, o.now());
+      for (const g of memoryOrgs) await recalculatePractices(g).catch(() => 0);
       return c.json({ resourceType: "Bundle", type: "sync-response", accepted: out.accepted.map((a) => a.record), refused: [...refusedNew, ...out.refused] });
     }
     return c.json({ error: "Bundle.type must be transaction or sync" }, 400);
@@ -1170,6 +1234,15 @@ export function createApp(o: ServerOptions) {
     if (!kind || !target || !o.push.send[kind]) return c.json({ error: "not a push target this server can use" }, 400);
     await o.push.targets.save(device, me, kind, target);
     return c.json({ on: true });
+  });
+
+  /** Recalculate this group's Practice figures now (rule 23), e.g. for projects completed before this server did it. Officers. */
+  app.post("/Organization/:id/$recalculate", async (c) => {
+    const me = (await o.identify(c.req.raw)).person; if (!me) return c.json({ error: "sign in first" }, 401);
+    const org = await o.store.get("Organization", c.req.param("id"));
+    if (!org) return c.json({ error: "not found" }, 404);
+    if (!permissionsForRecord(me, org, await loadDirectory(o.store, me, org)).includes("org.manage")) return c.json({ error: "officers only" }, 403);
+    return c.json({ changed: await recalculatePractices(`Organization/${org.id}`) });
   });
 
   /** The measure (BIX "Suggestions and their answers"): per question, used / edited / declined. Officers and core members. */
