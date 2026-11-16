@@ -67,7 +67,7 @@ export async function sqliteStore(db: Db) {
         else if (k === "participant") { where += " and exists (select 1 from json_each(resource, '$.participant') p where json_extract(p.value, '$.person.reference') = ?)"; args.push(v); }
         else { where += ` and (json_extract(resource, ?) = ? or json_extract(resource, ?) = ?)`; args.push(`$."${k}"`, v, `$."${k}".reference`, v); }
       }
-      return parse(await db.all<{ resource: string }>(`select resource from bix_records where ${where} order by updated_at asc limit 500`, ...args));
+      return parse(await db.all<{ resource: string }>(`select resource from (select resource, updated_at from bix_records where ${where} order by updated_at desc limit 1000) order by updated_at asc`, ...args));
     },
     async history(type: string, id: string) {
       return parse(await db.all<{ resource: string }>("select resource from bix_history where type = ? and id = ? order by version", type, id));

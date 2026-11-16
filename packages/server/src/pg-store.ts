@@ -35,7 +35,8 @@ export function pgStore(url: string) {
         ? sql`resource->'participant' @> ${sql.json([{ person: { reference: v } }] as never)}` :
         sql`(resource->>${k} = ${v} or resource->${k}->>'reference' = ${v})`);
       const where = conds.reduce((a, b) => sql`${a} and ${b}`, sql`type = ${type}`);
-      const rows = await sql`select resource from bix_records where ${where} order by updated_at asc limit 200`;
+      // The newest 1000, oldest first: a long list keeps its latest records (it used to keep the oldest 200).
+      const rows = await sql`select resource from (select resource, updated_at from bix_records where ${where} order by updated_at desc limit 1000) t order by updated_at asc`;
       return rows.map((r) => r.resource as BixResource);
     },
     async personForAccount(authUserId: string) {
