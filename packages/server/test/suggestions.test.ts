@@ -23,6 +23,11 @@ describe("suggestions and their answers", () => {
     if (d.status !== 200) console.log("D", JSON.stringify(d.json).slice(0, 500)); expect(d.status).toBe(200);
     const m = await call(`/Organization/${O}/$suggestions`, undefined, ana.token);
     expect(m.json.byQuestion.applies).toEqual({ used: 1, edited: 0, declined: 1 });
+    // A model's own idea for a step (2026-11-21): no confidence, counted under its own question.
+    const idea = await tx([{ resource: { resourceType: "Task", id: crypto.randomUUID(), meta: { version: 1 }, intent: "plan", status: "ready", title: "Set up a first aid tent", partOf: { reference: `Initiative/${I}` } },
+      assistedBy: { type: "model", model: { name: "Bayani-1", version: "1", question: "step-ideas" } } }]);
+    expect(idea.status).toBe(200);
+    expect((await call(`/Organization/${O}/$suggestions`, undefined, ana.token)).json.byQuestion["step-ideas"]).toEqual({ used: 1, edited: 0, declined: 0 });
   });
 
   it("lets a lead keep a step for next time as the group's own Practice (close-out), linked, suggested by Bayani; never with figures", async () => {

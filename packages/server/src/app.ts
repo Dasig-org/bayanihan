@@ -399,7 +399,7 @@ export function createApp(o: ServerOptions) {
     const me = (await o.identify(c.req.raw)).person;
     if (!me) return c.json({ error: "sign in, or use a link" }, 401);
     // BIX "Suggestions and their answers": an entry may say what suggested it (checked here; Core writes the Provenance).
-    const QUESTIONS = ["applies", "which-practice", "which-team", "one-off", "general-title", "usually-needed", "done-by-now", "out-of-order"];
+    const QUESTIONS = ["applies", "same-practice", "which-practice", "which-team", "one-off", "general-title", "usually-needed", "done-by-now", "out-of-order", "step-ideas"];
     const assisted = (x: unknown) => {
       const a = x as { type?: string; model?: { name?: unknown; version?: unknown; question?: unknown; confidence?: unknown; edited?: unknown }; rule?: unknown } | undefined;
       if (a?.type === "rule" && typeof a.rule === "string" && a.rule.length < 60) return { type: "rule" as const, rule: a.rule };
