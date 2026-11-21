@@ -80,7 +80,13 @@ BIX_DB=./data/bix.db BIX_OPEN_JOIN=1 npm start -w @bayanihan/server   # http://l
 
 ## Your contribution's licence
 
-By contributing you agree that your contribution is licensed under **Apache-2.0** ([`LICENSE`](LICENSE)).
+By contributing you agree that your contribution is licensed under the licence of the part you change: **Apache-2.0**
+for Bayanihan Core (`packages/core`), **AGPL-3.0** for Bayanihan Server and everything else in this repository (see
+the README's Licence section).
+
+Sign off each commit (`git commit -s`), which adds a `Signed-off-by:` line. It certifies the
+[Developer Certificate of Origin](https://developercertificate.org/): that you wrote the change, or otherwise have the
+right to submit it under these licences.
 
 ## Questions
 

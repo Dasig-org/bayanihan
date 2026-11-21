@@ -1,6 +1,6 @@
 # Bayanihan Server
 
-The reference BIX server, like HAPI for FHIR. Stores BIX records in Postgres, answers the standard BIX API, and runs Bayanihan Core on every change. Dasig is one client of it. Apache-2.0 when published.
+The reference BIX server, like HAPI for FHIR. Stores BIX records in Postgres, answers the standard BIX API, and runs Bayanihan Core on every change. Dasig is one client of it. AGPL-3.0 (from 2026-11-21; releases before then remain Apache-2.0).
 
 | Endpoint | What it does |
 |---|---|

@@ -4,7 +4,7 @@
   "description": "Bayanihan Server: the reference BIX server. Stores BIX records, answers the standard BIX API, and runs Bayanihan Core on every change.",
   "type": "module",
   "main": "src/index.ts",
-  "license": "Apache-2.0",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

@@ -97,7 +97,16 @@ Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before your first pull request. Everyo
 
 ## Licence
 
-**Apache-2.0**, see [`LICENSE`](LICENSE). Maintained by Dasig Inc. Questions: hello@dasig.org.
+- **Bayanihan Core** (`packages/core`): **Apache-2.0**, see [`packages/core/LICENSE`](packages/core/LICENSE). Permissive,
+  so any app or system can build on BIX's rules.
+- **Bayanihan Server** (`packages/server`) and everything that runs it (`deploy/`, `supabase/`, `tools/`): **AGPL-3.0**,
+  see [`LICENSE`](LICENSE) and [`packages/server/LICENSE`](packages/server/LICENSE). Anyone may run, change and host
+  it; if you run a changed version as a service, you share your changes under the same licence. The same licence as
+  the Dasig app.
+
+The Server moved from Apache-2.0 to AGPL-3.0 on 2026-11-21. Releases and commits before that date stay available under
+Apache-2.0. The Dasig name and emblem are trademarks of Dasig Inc.; forks need their own name. Maintained by Dasig
+Inc. Questions: hello@dasig.org.
 
 ## Credits
 
