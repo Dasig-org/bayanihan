@@ -1,9 +1,13 @@
-import canonicalize from "canonicalize";
+import canonicalizeModule from "canonicalize";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha512";
 import { sha256 as nobleSha256 } from "@noble/hashes/sha256";
 import { bytesToHex, hexToBytes, randomBytes } from "@noble/hashes/utils";
 import type { BixResource } from "./validate.js";
+
+// canonicalize is CommonJS with an ESM-style type file: bundlers hand back the function, Node's ESM loader hands back
+// `module.exports`, and TypeScript under NodeNext types it as a namespace. Take the function either way.
+const canonicalize = ((canonicalizeModule as { default?: unknown }).default ?? canonicalizeModule) as (input: unknown) => string | undefined;
 
 // Pure JavaScript, so signing works the same in Node, browsers and the phone (Hermes has no WebCrypto).
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));

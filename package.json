@@ -6,8 +6,9 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run build -w @bayanihan/core && npm run test --workspaces --if-present",
+    "typecheck": "npm run build -w @bayanihan/core && npm run typecheck --workspaces --if-present",
     "verify": "npm run typecheck && npm test"
   },
   "engines": {
