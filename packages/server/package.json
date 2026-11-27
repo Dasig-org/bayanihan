@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "description": "Bayanihan Server: the reference BIX server. Stores BIX records, answers the standard BIX API, and runs Bayanihan Core on every change.",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "license": "AGPL-3.0-only",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/main.ts",
-    "start": "tsx src/main.ts"
+    "start": "tsx src/main.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1166.0",
@@ -42,8 +44,20 @@
     "access": "public"
   },
   "files": [
-    "src",
+    "dist",
     "README.md",
-    "LICENSE"
-  ]
+    "LICENSE",
+    "data"
+  ],
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
 }
