@@ -37,14 +37,17 @@ BIX says what a group's records look like. This repository makes them behave:
 
 ## Run it
 
-You need Node.js 22. The `@bayanihan/*` packages aren't on npm yet, so [BIX](https://github.com/Dasig-org/bix) sits
-beside this repository:
+To use Core or Server in your own project:
 
 ```sh
-mkdir dasig && cd dasig
-git clone https://github.com/Dasig-org/bix.git
+npm install @bayanihan/core      # the rules engine
+npm install @bayanihan/server    # the reference server
+```
+
+To work on this repository you need Node.js 22.13 or newer:
+
+```sh
 git clone https://github.com/Dasig-org/bayanihan.git
-(cd bix && npm install)
 cd bayanihan && npm install
 
 npm run verify                                                        # typecheck + tests
@@ -84,6 +87,8 @@ Every setting is explained in [`deploy/env.example`](deploy/env.example).
 - **Review the security model** (permissions, signatures, privacy) and report problems privately via
   [`SECURITY.md`](SECURITY.md).
 - **Questions:** [Dasig-org Discussions](https://github.com/orgs/Dasig-org/discussions).
+
+Maintainers: how to publish the npm packages is in [`RELEASING.md`](RELEASING.md).
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before your first pull request. Everyone taking part follows the
 [Code of Conduct](CODE_OF_CONDUCT.md).

@@ -1,6 +1,19 @@
 # Bayanihan Core
 
-The engine that enforces BIX. One TypeScript package used by the Dasig app (on the phone) and by Bayanihan Server, so the two can never disagree about what's valid. Permissive licence when published.
+The engine that enforces BIX. One TypeScript package used by the Dasig app (on the phone) and by Bayanihan Server, so the two can never disagree about what's valid. Apache-2.0.
+
+```sh
+npm install @bayanihan/core
+```
+
+```js
+import { validate } from "@bayanihan/core";
+
+const { valid, errors } = validate(record);   // any BIX record
+if (!valid) console.log(errors);              // [{ path, message }]
+```
+
+Signing lives at `@bayanihan/core/sign`, report figures at `@bayanihan/core/figures`, project memory at `@bayanihan/core/memory`. Node.js 22.13 or newer; also runs in Expo and browsers.
 
 | Module | What it does |
 |---|---|
@@ -10,6 +23,8 @@ The engine that enforces BIX. One TypeScript package used by the Dasig app (on t
 | `sign` | RFC 8785 canonical form, SHA-256, Ed25519 signing and verification of records |
 | `figures` | Report figure rules (`count-tasks`, `sum-task-hours`, `sum-task-output`, `sum-received`, `sum-part-reports`) and small-number hiding |
 | `vote` | Counts a Decision's votes: last vote per eligible voter before closing, quorum, thresholds, consent |
+
+To work on Core, clone [the repository](https://github.com/Dasig-org/bayanihan) and run:
 
 ```bash
 npm test -w @bayanihan/core

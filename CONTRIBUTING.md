@@ -26,13 +26,10 @@ By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Set up
 
-You need Node.js 22. `@bayanihan/*` packages aren't on npm yet, so BIX sits beside this repository:
+You need Node.js 22.13 or newer. [BIX](https://github.com/Dasig-org/bix) comes from npm as `@bayanihan/bix`.
 
 ```sh
-mkdir dasig && cd dasig
-git clone https://github.com/Dasig-org/bix.git
 git clone https://github.com/<you>/bayanihan.git     # your fork
-(cd bix && npm install)
 cd bayanihan && npm install
 npm run verify        # typecheck + tests; should pass before you change anything
 ```
@@ -68,7 +65,7 @@ BIX_DB=./data/bix.db BIX_OPEN_JOIN=1 npm start -w @bayanihan/server   # http://l
 
 1. Branch from `main` in your fork: `git switch -c core-claim-tests`.
 2. Keep it to one change, with tests where code changes.
-3. Run `npm run verify` and say so in the pull request.
+3. Run `npm run verify` and say so in the pull request. The same checks run on every pull request.
 4. Fill in the pull request template.
 
 ## What happens next
