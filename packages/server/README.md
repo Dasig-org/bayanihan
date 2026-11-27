@@ -2,6 +2,12 @@
 
 The reference BIX server, like HAPI for FHIR. Stores BIX records in Postgres, answers the standard BIX API, and runs Bayanihan Core on every change. Dasig is one client of it. AGPL-3.0 (from 2026-11-21; releases before then remain Apache-2.0).
 
+```sh
+npm install @bayanihan/server     # Node.js 22.13 or newer
+```
+
+To run your own server, clone [the repository](https://github.com/Dasig-org/bayanihan) and follow [Run it](https://github.com/Dasig-org/bayanihan#run-it). To embed it, `createApp` builds the app and `sqliteStore` gives it a SQLite store.
+
 | Endpoint | What it does |
 |---|---|
 | `GET /metadata` | What this server supports |
