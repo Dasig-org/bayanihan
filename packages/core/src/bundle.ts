@@ -1,5 +1,6 @@
 import type { BixResource } from "./validate.js";
 import { applyChange, type Context } from "./rules.js";
+import { rebaseOwnFacts } from "./ownfacts.js";
 
 /** Where records live. The server backs this with Postgres; tests and the phone use memory or SQLite. */
 export interface Store {
@@ -29,12 +30,19 @@ export type Replayed = {
  * so a claim made offline loses to one that reached the home server first. Refused changes are
  * reported, never merged.
  */
-export async function replay(store: Store, changes: Change[], recordedAt: string): Promise<Replayed> {
+export async function replay(store: Store, changes: Change[], recordedAt: string,
+  opts: { baseOf?: (type: string, id: string, version: number) => Promise<BixResource | null>; via?: Context["via"] } = {}): Promise<Replayed> {
   const out: Replayed = { accepted: [], refused: [] };
   const ordered = [...changes].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   for (const c of ordered) {
     const current = await store.get(c.record.resourceType, c.record.id);
-    const r = applyChange(current, c.record, { ...c.context, now: c.occurredAt, offline: true });
+    const ctx = { ...c.context, now: c.occurredAt, offline: true, via: c.context.via ?? opts.via ?? { kind: "replayed" as const } };
+    let r = applyChange(current, c.record, ctx);
+    // Your own facts win: a stale change that only touches the person's own facts is put on top of the current version.
+    if (!r.ok && current && opts.baseOf && c.context.actor.type === "person" && c.record.meta.version <= current.meta.version) {
+      const rebased = rebaseOwnFacts(await opts.baseOf(c.record.resourceType, c.record.id, c.record.meta.version - 1), c.record, current, c.context.actor.person.reference);
+      if (rebased) { const again = applyChange(current, rebased, ctx); if (again.ok) r = again; }
+    }
     if (r.ok) {
       const provenance = { ...r.provenance, recorded: recordedAt };
       await store.commit(r.record, provenance);

@@ -9,3 +9,4 @@ export * from "./bundle.js";
 export * from "./proposal.js";
 export * from "./practice.js";
 export * from "./suggestions.js";
+export * from "./ownfacts.js";
