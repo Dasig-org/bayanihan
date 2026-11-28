@@ -1,6 +1,6 @@
 {
   "name": "@bayanihan/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Bayanihan Core: the engine that enforces BIX. Validation, lifecycles, commit rules, provenance, signatures and report figures, shared by apps and servers.",
   "type": "module",
   "main": "dist/index.js",
