@@ -28,6 +28,8 @@ export type Context = {
   viaProposal?: boolean;
   /** This rule runs on the group's home server, or its hub phone (BIX rule 23): the only place Practice figures are calculated. */
   authoritative?: boolean;
+  /** How the change reached the home server (BIX Provenance.via, 2026-11-28). */
+  via?: { kind: "direct" | "hub" | "replayed"; endpoint?: Ref };
   /** The id generator for new Provenance records. */
   newId: () => string;
 };
@@ -119,6 +121,12 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
   // A group's assistance areas are its own choice: only a person with org.manage changes them (BIX rule 22).
   if (next.resourceType === "Organization" && JSON.stringify(prev?.["assist"] ?? []) !== JSON.stringify(next["assist"] ?? [])) {
     if (ctx.actor.type !== "person" || !ctx.permissions.includes("org.manage")) reasons.push("turning assistance on or off needs org.manage");
+  }
+
+  // Where a group's records are decided is its officers' choice, and a recorded act (BIX "Taking a group to a hub and back").
+  if (next.resourceType === "Organization" && JSON.stringify(prev?.["homeServer"] ?? null) !== JSON.stringify(next["homeServer"] ?? null)) {
+    if (ctx.actor.type === "model") reasons.push("a model can't move a group's home server");
+    else if (ctx.actor.type === "person" && !ctx.permissions.includes("org.manage")) reasons.push("moving a group to a hub, or back, needs org.manage");
   }
 
   // Project memory (BIX rules 4, 23): figures are calculated by rule; a lead makes a Practice active; lessons name their author.
@@ -218,6 +226,7 @@ export function applyChange(prev: BixResource | null, next: BixResource, ctx: Co
     agent,
     occurredAt: ctx.now,
     offline: !!ctx.offline,
+    ...(ctx.via ? { via: ctx.via } : {}),
   };
   return { ok: true, record, provenance };
 }
