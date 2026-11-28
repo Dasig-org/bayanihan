@@ -22,6 +22,8 @@ export type ServerOptions = {
     provenanceFor?(target: string): Promise<BixResource[]>;
     version?(type: string, id: string, version: number): Promise<BixResource | null>;
     mentioning?(reference: string): Promise<BixResource[]>;
+    /** Keep records as they are, at their own versions (a hub taking a group handed over by the cloud). */
+    keep?(records: BixResource[]): Promise<void>;
   };
   /** Secret halves of ShareLinks. Without it, links can't be created. */
   linkTokens?: LinkTokens;
@@ -421,7 +423,7 @@ export function createApp(o: ServerOptions) {
       for (const e of entries) {
         const prev = await o.store.get(e.resource.resourceType, e.resource.id);
         if (isReplay(prev, e.resource)) { results.push({ ok: true, record: prev }); continue; }
-        const why = (prev ? await canUpdate(me, prev, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource), { ownsParent: await ownsParent(me, e.resource) })) ?? (await privacyWhy(e.resource));
+        const why = ((await awayOnHub(prev ?? e.resource)) ? AWAY : null) ?? (prev ? await canUpdate(me, prev, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource), { ownsParent: await ownsParent(me, e.resource) })) ?? (await privacyWhy(e.resource));
         if (why) { results.push({ ok: false, reasons: [why], current: prev }); continue; }
         const ab = assisted(e.assistedBy);
         const r = applyChange(prev, e.resource, { ...(await ctxFor(e.resource)), now: o.now(), ...(ab ? { assistedBy: ab } : {}) });
@@ -444,7 +446,7 @@ export function createApp(o: ServerOptions) {
       for (const e of entries) {
         const prevRec = await o.store.get(e.resource.resourceType, e.resource.id);
         if (isReplay(prevRec, e.resource)) continue;
-        const why = (prevRec ? await canUpdate(me, prevRec, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource), { ownsParent: await ownsParent(me, e.resource) })) ?? (await privacyWhy(e.resource));
+        const why = ((await awayOnHub(prevRec ?? e.resource)) ? AWAY : null) ?? (prevRec ? await canUpdate(me, prevRec, e.resource) : canCreate(me, e.resource, await loadDirectory(o.store, me, e.resource), { ownsParent: await ownsParent(me, e.resource) })) ?? (await privacyWhy(e.resource));
         if (why) { refusedNew.push({ record: e.resource, reasons: [why], current: prevRec }); continue; }
         const ab = assisted(e.assistedBy);
         changes.push({ record: e.resource, occurredAt: e.occurredAt ?? o.now(), context: { ...(await ctxFor(e.resource)), ...(ab ? { assistedBy: ab } : {}) } });
@@ -452,7 +454,7 @@ export function createApp(o: ServerOptions) {
       const sealing = { get: (t: string, i: string) => o.store.get(t, i),
         commit: async (rec: BixResource, prov: BixResource) => { const prev = await o.store.get(rec.resourceType, rec.id); const ref = await reference(prev, rec); await o.store.commit(ref, await seal(prev, ref, prov)); told(prev, ref, me);
           if (touchesMemory(prev, ref)) { const g = await orgOf(ref); if (g) memoryOrgs.add(g); } } };
-      const out = await replay(sealing, changes, o.now());
+      const out = await replay(sealing, changes, o.now(), o.store.version ? { baseOf: (t, i, v) => o.store.version!(t, i, v) } : {});
       for (const g of memoryOrgs) await recalculatePractices(g).catch(() => 0);
       return c.json({ resourceType: "Bundle", type: "sync-response", accepted: out.accepted.map((a) => a.record), refused: [...refusedNew, ...out.refused] });
     }
@@ -479,6 +481,12 @@ export function createApp(o: ServerOptions) {
     if (!org || !o.store.mentioning) return c.json({ error: "not found" }, 404);
     const perms = permissionsForRecord(me, org, await loadDirectory(o.store, me, org));
     if (!perms.includes("org.manage")) return c.json({ error: "exporting a group needs org.manage" }, 403);
+    return c.json(toBundle(await groupRecords(org), "export", o.newId(), o.now()));
+  });
+
+  /** Everything a group owns: the group, what mentions it, what's in its projects and teams, and their Provenance. */
+  async function groupRecords(org: BixResource): Promise<BixResource[]> {
+    if (!o.store.mentioning) return [org];
     const seen = new Map<string, BixResource>([[`Organization/${org.id}`, org]]);
     const add = (rs: BixResource[]) => rs.forEach((r) => seen.set(`${r.resourceType}/${r.id}`, r));
     add(await o.store.mentioning(`Organization/${org.id}`));
@@ -488,8 +496,8 @@ export function createApp(o: ServerOptions) {
       const prov = o.store.provenanceFor ? await o.store.provenanceFor(`${r.resourceType}/${r.id}`) : [];
       add(prov);
     }
-    return c.json(toBundle([...seen.values()], "export", o.newId(), o.now()));
-  });
+    return [...seen.values()];
+  }
 
   /**
    * Upload a file (raw body). Returns a BIX Attachment to put on a record's attachment[] or output[].
@@ -726,7 +734,8 @@ export function createApp(o: ServerOptions) {
         signed = { by: sigs[0].who.reference, unchanged: !!rec && !!pub && (await verifyRecord(rec, sigs[0], pub.publicKey)) };
       }
       out.push({ version: v, activity: p["activity"], by: agents.find((a) => a.type === "author")?.who?.reference ?? null, model: agents.some((a) => a.type === "model"),
-        rule: agents.some((a) => a.type === "rule"), when: p["occurredAt"] ?? p["recorded"], offline: !!p["offline"], signed });
+        rule: agents.some((a) => a.type === "rule"), when: p["occurredAt"] ?? p["recorded"], offline: !!p["offline"], signed,
+        ...(p["via"] ? { via: p["via"], recorded: p["recorded"] ?? null } : {}) });
     }
     out.sort((a, b) => a.version - b.version);
     return c.json({ record: `${type}/${id}`, entry: out });
@@ -1052,6 +1061,127 @@ export function createApp(o: ServerOptions) {
       counts.added++;
     }
     return c.json({ ...counts, refusedDetail: refused.slice(0, 20), organization: orgRef });
+  });
+
+  /**
+   * BIX "Taking a group to a hub and back" (2026-11-28). The group whose records a record belongs to, and whether it is
+   * away on a hub. Only a cloud server holds a group read-only while away: a hub (a server with a pairing code) is home.
+   */
+  async function groupOf(r: BixResource): Promise<string | undefined> {
+    const ref = (x: unknown) => (x as { reference?: string } | undefined)?.reference;
+    if (r.resourceType === "Organization") return `Organization/${r.id}`;
+    if (ref(r["organization"])) return ref(r["organization"]);
+    const team = ref(r["team"]);
+    if (team) { const t = await o.store.get("Team", team.split("/")[1]!); if (t && ref(t["organization"])) return ref(t["organization"]); }
+    const g = await orgOf(r); return g;
+  }
+  async function awayOnHub(r: BixResource): Promise<BixResource | null> {
+    if (o.pairingCode) return null;
+    const g = await groupOf(r);
+    const org = g ? await o.store.get("Organization", g.split("/")[1]!) : null;
+    const home = (org?.["homeServer"] as { reference?: string } | undefined)?.reference;
+    if (!home?.startsWith("Endpoint/")) return null;
+    const ep = await o.store.get("Endpoint", home.split("/")[1]!);
+    return ep && ep["kind"] === "hub" && ep["status"] === "active" ? ep : null;
+  }
+  const AWAY = "away-on-hub: your group is working on its hub. This change is kept on your phone and sent when the hub brings the group back online.";
+  const asPerson = (me: string) => ({ actor: { type: "person" as const, person: { reference: me } }, permissions: ["org.manage"], now: o.now(), newId: o.newId });
+
+  /** Cloud: hand a group to a hub. Records the hub's Endpoint as the group's home server, then returns the group's records for the hub. */
+  app.post("/Organization/:id/$handover", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    if (o.pairingCode) return c.json({ error: "hand a group over from the cloud server" }, 400);
+    const org = await o.store.get("Organization", c.req.param("id"));
+    if (!org) return c.json({ error: "not found" }, 404);
+    if (!me || !permissionsForRecord(me, org, await loadDirectory(o.store, me, org)).includes("org.manage")) return c.json({ error: "moving a group to a hub needs org.manage" }, 403);
+    if (await awayOnHub(org)) return c.json({ error: "this group is already on a hub" }, 409);
+    const body = (await c.req.json().catch(() => ({}))) as { publicKey?: string; name?: string };
+    const ep: BixResource = { resourceType: "Endpoint", id: o.newId(), meta: { version: 1 }, kind: "hub", status: "active", organization: { reference: `Organization/${org.id}` },
+      address: `hub:${(body.name ?? "hub").slice(0, 60)}`, ...(typeof body.publicKey === "string" ? { publicKey: body.publicKey } : {}) };
+    const e = applyChange(null, ep, asPerson(me));
+    if (!e.ok) return c.json({ error: e.reasons }, 400);
+    await o.store.commit(e.record, e.provenance);
+    const moved = applyChange(org, { ...org, meta: { ...org.meta, version: org.meta.version + 1 }, homeServer: { reference: `Endpoint/${ep.id}` } } as BixResource, asPerson(me));
+    if (!moved.ok) return c.json({ error: moved.reasons }, 400);
+    await o.store.commit(moved.record, await seal(org, moved.record, moved.provenance));
+    return c.json({ endpoint: e.record, bundle: toBundle(await groupRecords(moved.record), "export", o.newId(), o.now()) });
+  });
+
+  /** Hub: take a group handed over by the cloud. Its records are kept as they are, versions and signatures included. */
+  app.post("/$adopt", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    if (!o.pairingCode) return c.json({ error: "this server is not a hub" }, 501);
+    if (!me) return c.json({ error: "pair with this hub first" }, 401);
+    const body = (await c.req.json().catch(() => ({}))) as { entry?: { resource: BixResource }[] };
+    const rs = (body.entry ?? []).map((e) => e.resource).filter(Boolean);
+    const org = rs.find((r) => r.resourceType === "Organization" && (r["homeServer"] as { reference?: string } | undefined)?.reference?.startsWith("Endpoint/"));
+    if (!org) return c.json({ error: "send a group that was handed over to a hub" }, 400);
+    const officer = rs.some((r) => r.resourceType === "Role" && (r["person"] as { reference?: string })?.reference === me && (r["organization"] as { reference?: string })?.reference === `Organization/${org.id}` && r["status"] === "active");
+    if (!officer) return c.json({ error: "only a member of the group can bring it to this hub" }, 403);
+    if (!o.store.keep) return c.json({ error: "this hub can't keep records as they are" }, 501);
+    await o.store.keep(rs);
+    const kept = rs.filter((r) => r.resourceType !== "Provenance").length;
+    return c.json({ organization: `Organization/${org.id}`, kept });
+  });
+
+  /** Hub: what changed while it was the group's home, each version with its Provenance, oldest first, to hand back. */
+  app.get("/Organization/:id/$handback", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    if (!o.pairingCode) return c.json({ error: "this server is not a hub" }, 501);
+    const org = await o.store.get("Organization", c.req.param("id"));
+    if (!org || !o.store.history || !o.store.provenanceFor) return c.json({ error: "not found" }, 404);
+    if (!me || !permissionsForRecord(me, org, await loadDirectory(o.store, me, org)).includes("org.manage")) return c.json({ error: "handing a group back needs org.manage" }, 403);
+    const ep = (org["homeServer"] as { reference?: string } | undefined)?.reference;
+    const since = ep ? (await o.store.get("Endpoint", ep.split("/")[1]!))?.meta.lastUpdated as string | undefined : undefined;
+    if (!since) return c.json({ error: "this group wasn't handed to this hub" }, 400);
+    const entry: { resource: BixResource; provenance: BixResource }[] = [];
+    for (const r of await groupRecords(org)) {
+      if (r.resourceType === "Provenance") continue;
+      const provs = await o.store.provenanceFor(`${r.resourceType}/${r.id}`);
+      for (const v of await o.store.history(r.resourceType, r.id)) {
+        const p = provs.find((x) => (x["target"] as { reference: string }[])[0]?.reference === `${r.resourceType}/${r.id}/_history/${v.meta.version}`);
+        if (!p) continue;
+        if (String(p["recorded"] ?? p["occurredAt"]) <= since) continue;
+        entry.push({ resource: v, provenance: p });
+      }
+    }
+    entry.sort((a, b) => String(a.provenance["occurredAt"]).localeCompare(String(b.provenance["occurredAt"])) || a.resource.meta.version - b.resource.meta.version);
+    return c.json({ resourceType: "Bundle", type: "sync", endpoint: ep, entry });
+  });
+
+  /**
+   * Cloud: a hub hands a group back. Nothing changed here while the hub was home, so its versions are kept as they are,
+   * marked as having come through the hub; then this server is home again. With no entries, it releases a lost hub.
+   */
+  app.post("/Organization/:id/$handback", async (c) => {
+    const me = (await o.identify(c.req.raw)).person;
+    if (o.pairingCode) return c.json({ error: "hand a group back to the cloud server" }, 400);
+    const org = await o.store.get("Organization", c.req.param("id"));
+    if (!org) return c.json({ error: "not found" }, 404);
+    if (!me || !permissionsForRecord(me, org, await loadDirectory(o.store, me, org)).includes("org.manage")) return c.json({ error: "handing a group back needs org.manage" }, 403);
+    const ep = await awayOnHub(org);
+    const body = (await c.req.json().catch(() => ({}))) as { endpoint?: string; entry?: { resource: BixResource; provenance: BixResource }[] };
+    if (!ep || body.endpoint !== `Endpoint/${ep.id}`) return c.json({ error: "this group isn't on that hub" }, 409);
+    const g = `Organization/${org.id}`;
+    const via = { kind: "hub" as const, endpoint: { reference: `Endpoint/${ep.id}` } };
+    let kept = 0; const refused: string[] = [];
+    for (const { resource: r, provenance: p } of body.entry ?? []) {
+      if (!r || !p || r.resourceType === "Provenance" || r.resourceType === "Endpoint") continue;
+      const here = await o.store.get(r.resourceType, r.id);
+      if (here && here.meta.version >= r.meta.version) continue; // already here
+      if ((here && r.meta.version !== here.meta.version + 1) || (!here && r.meta.version !== 1)) { refused.push(`${r.resourceType}/${r.id}: versions out of order`); continue; }
+      if ((await groupOf(here ?? r)) !== g && !(r.resourceType === "Person")) { refused.push(`${r.resourceType}/${r.id}: not this group's`); continue; }
+      if (r.resourceType === "Person" && here) { refused.push(`Person/${r.id}: a profile changes only from its own phone`); continue; }
+      await o.store.commit(r, { ...p, id: (await o.store.get("Provenance", p.id)) ? o.newId() : p.id, via, recorded: o.now() });
+      kept++;
+    }
+    const now = (await o.store.get("Organization", org.id))!;
+    const { homeServer: _, ...rest } = now;
+    const back = applyChange(now, { ...rest, meta: { ...now.meta, version: now.meta.version + 1 } } as BixResource, { ...asPerson(me), via });
+    if (back.ok) await o.store.commit(back.record, back.provenance);
+    const off = applyChange(ep, { ...ep, meta: { ...ep.meta, version: ep.meta.version + 1 }, status: "off" } as BixResource, asPerson(me));
+    if (off.ok) await o.store.commit(off.record, off.provenance);
+    return c.json({ kept, refused, organization: g });
   });
 
   app.post("/$pair", async (c) => {
