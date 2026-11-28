@@ -59,6 +59,22 @@ export async function sqliteStore(db: Db) {
         await db.run("insert into bix_records (type, id, version, resource, updated_at) values ('Provenance', ?, 1, ?, ?)", provenance.id, JSON.stringify(provenance), now());
       });
     },
+    /**
+     * A hub taking a group handed over by the cloud (BIX "Taking a group to a hub and back"): records are kept as they
+     * are, at their own versions, never as new versions. Only a newer version replaces what's here.
+     */
+    async keep(records: BixResource[]) {
+      await db.tx(async () => {
+        for (const r of records) {
+          const json = JSON.stringify(r), v = r.meta.version;
+          if (r.resourceType === "Provenance") { await db.run("insert or ignore into bix_records (type, id, version, resource, updated_at) values ('Provenance', ?, 1, ?, ?)", r.id, json, now()); continue; }
+          const here = await db.all<{ version: number }>("select version from bix_records where type = ? and id = ?", r.resourceType, r.id);
+          if (here[0] && here[0].version >= v) continue;
+          await db.run("insert or replace into bix_records (type, id, version, resource, updated_at) values (?, ?, ?, ?, ?)", r.resourceType, r.id, v, json, now());
+          await db.run("insert or ignore into bix_history (type, id, version, resource, recorded_at) values (?, ?, ?, ?, ?)", r.resourceType, r.id, v, json, now());
+        }
+      });
+    },
     /** Equality on top-level fields or reference targets; participant matches any active person. */
     async search(type: string, params: Record<string, string>) {
       let where = "type = ?"; const args: string[] = [type];
