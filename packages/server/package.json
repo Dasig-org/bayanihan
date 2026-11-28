@@ -1,6 +1,6 @@
 {
   "name": "@bayanihan/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Bayanihan Server: the reference BIX server. Stores BIX records, answers the standard BIX API, and runs Bayanihan Core on every change.",
   "type": "module",
   "main": "dist/index.js",
@@ -16,7 +16,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1166.0",
     "@aws-sdk/client-sesv2": "^3.1167.0",
-    "@bayanihan/core": "^0.1.0",
+    "@bayanihan/core": "^0.2.0",
     "@hono/node-server": "^1.13.0",
     "@noble/hashes": "^1.8.0",
     "hono": "^4.6.0",
