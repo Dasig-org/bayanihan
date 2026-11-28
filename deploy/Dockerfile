@@ -2,6 +2,19 @@
 # Build from the repository root, with the sibling bix repository as a named context:
 #   docker build -f deploy/Dockerfile --build-context bix=../bix -t bayanihan/server .
 # (deploy/compose.yml does this.) The lockfile links @bayanihan/bix to ../bix, so it goes to /bix.
+# Build @bayanihan/core first: the server imports its compiled dist/ (since the npm packaging).
+FROM node:24-slim AS core
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY --from=bix package.json /bix/
+COPY packages/core/package.json packages/core/
+COPY packages/server/package.json packages/server/
+RUN npm ci
+COPY --from=bix schemas /bix/schemas
+RUN ln -s /app/node_modules /bix/node_modules
+COPY packages/core packages/core
+RUN npm run build -w @bayanihan/core
+
 FROM node:24-slim
 ARG TARGETARCH
 ARG LITESTREAM_VERSION=0.5.17
@@ -19,6 +32,7 @@ COPY --from=bix schemas /bix/schemas
 # bix's own dependencies (ajv) are installed in /app/node_modules; let /bix resolve them from there.
 RUN ln -s /app/node_modules /bix/node_modules
 COPY packages/core packages/core
+COPY --from=core /app/packages/core/dist packages/core/dist
 COPY packages/server packages/server
 COPY deploy/litestream.yml /etc/litestream.yml
 COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
